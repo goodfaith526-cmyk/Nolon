@@ -23,6 +23,8 @@ export const COMMISSION_TRIGGERS = [
   'SHIPMENT_PARTNERS',
   /** ShipmentsService.correctCargo: the quantity of a fixed amount per unit (F149-4). */
   'CARGO_CORRECTED',
+  /** Plan 18, 4.3: the broker who brought it, picked at the window receipt or corrected by staff. */
+  'SHIPMENT_REFERRER',
 ] as const;
 export type CommissionTrigger = (typeof COMMISSION_TRIGGERS)[number];
 

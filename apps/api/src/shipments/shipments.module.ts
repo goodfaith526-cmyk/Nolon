@@ -15,6 +15,7 @@ import { ShipmentLinksRegistry } from './shipment-links.registry.js';
 import { ShipmentStatusListenersRegistry } from './shipment-status-listeners.registry.js';
 import { ShipmentStockRegistry } from './shipment-stock.registry.js';
 import { ShipmentsService } from './shipments.service.js';
+import { ShipmentReferralsService } from './shipment-referrals.service.js';
 import { ShipmentReportsService } from './shipment-reports.service.js';
 import { ShipmentStatusDraftsController } from './shipment-status-drafts.controller.js';
 import { ShipmentStatusDraftsService } from './shipment-status-drafts.service.js';
@@ -38,6 +39,7 @@ import { ShipmentStatusDraftsService } from './shipment-status-drafts.service.js
     ShipmentStockRegistry,
     ShipmentReportsService,
     ShipmentsService,
+    ShipmentReferralsService,
     PublicTrackingService,
     ShipmentStatusDraftsService,
   ],
@@ -50,6 +52,7 @@ import { ShipmentStatusDraftsService } from './shipment-status-drafts.service.js
     ShipmentStockRegistry,
     ShipmentReportsService,
     ShipmentsService,
+    ShipmentReferralsService,
     ShipmentStatusDraftsService,
   ],
 })

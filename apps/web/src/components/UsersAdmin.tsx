@@ -254,6 +254,10 @@ function UserForm({
   const me = useMe();
   const [busy, setBusy] = useState(false);
   const [outletStaff, setOutletStaff] = useState(user?.roles.includes('OUTLET_STAFF') ?? false);
+  // Plan 18, 8: a broker's own login acts for one referrer (sent as `outletIds`).
+  const [referrerStaff, setReferrerStaff] = useState(
+    user?.roles.includes('REFERRER_STAFF') ?? false,
+  );
   const [branchIds, setBranchIds] = useState<string[]>(user?.branchIds ?? []);
   const [outletId, setOutletId] = useState(user?.outletIds[0] ?? '');
 
@@ -266,7 +270,7 @@ function UserForm({
       roles: ROLES.filter((role) => form.getAll('roles').includes(role)),
       branchIds: form.getAll('branchIds').map(String),
     };
-    if (outletStaff) body.outletIds = outletId ? [outletId] : [];
+    if (outletStaff || referrerStaff) body.outletIds = outletId ? [outletId] : [];
     if (!user) {
       body.email = field(form, 'email');
       body.password = field(form, 'password');
@@ -331,7 +335,11 @@ function UserForm({
                 value={role}
                 defaultChecked={user?.roles.includes(role)}
                 onChange={
-                  role === 'OUTLET_STAFF' ? (e) => setOutletStaff(e.target.checked) : undefined
+                  role === 'OUTLET_STAFF'
+                    ? (e) => setOutletStaff(e.target.checked)
+                    : role === 'REFERRER_STAFF'
+                      ? (e) => setReferrerStaff(e.target.checked)
+                      : undefined
                 }
               />
               {tRoles(role)}
@@ -363,6 +371,23 @@ function UserForm({
         </div>
       </fieldset>
 
+      {referrerStaff && (
+        <label className="field">
+          <span>{t('referrer')}</span>
+          <span className="muted">{t('referrerHint')}</span>
+          {branchIds.length === 1 ? (
+            <PartnerSelect
+              kind="REFERRER"
+              branchIds={branchIds}
+              held={null}
+              value={outletId}
+              onChange={setOutletId}
+            />
+          ) : (
+            <span className="error">{t('outletOneBranch')}</span>
+          )}
+        </label>
+      )}
       {outletStaff && (
         <label className="field">
           <span>{t('outlet')}</span>

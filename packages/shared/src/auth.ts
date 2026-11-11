@@ -20,6 +20,10 @@ export const ROLES = [
   // customers, quotations, bookings, shipments and documents of their own outlets, and holds no
   // other role. Assigning it stays locked until the owner opens it (OUTLET_STAFF_ASSIGNABLE).
   'OUTLET_STAFF',
+  // Plan 18, 8 (owner, 2026-11-10): a referral broker's own login, tied to one referrer partner.
+  // Sees only the customers he registered and his own commissions, adds a customer by name and
+  // phone, and holds no other role.
+  'REFERRER_STAFF',
 ] as const;
 
 export type Role = (typeof ROLES)[number];
@@ -92,6 +96,9 @@ export const PERMISSION_MODULES = [
   // window). view: the bookings to be handed over at its windows; create: receive the goods
   // there (plan 13 section 3); update: take the customer's money there (section 4).
   'window_desk',
+  // Plan 18, 8: a referral broker's own screen (REFERRER_STAFF only). view: his customers and
+  // commissions; create: adding a customer by name and phone.
+  'referrer_portal',
 ] as const;
 
 export type PermissionModule = (typeof PERMISSION_MODULES)[number];
@@ -121,78 +128,81 @@ const LEVEL_ACTIONS: Record<Level, readonly PermissionAction[]> = {
  * One string per module, one letter per role in ROLES order:
  * Admin, Management, Branch Mgr, Sales, Operations, Finance, Warehouse, Customs, Driver,
  * Sales & Marketing Mgr (added after the annex: Sales' access, and the rates in full),
- * Outlet Staff (business model plan 4.2: their own outlets' records only, see OUTLET_SCOPED).
+ * Outlet Staff (business model plan 4.2: their own outlets' records only, see OUTLET_SCOPED),
+ * Referrer Staff (plan 18, 8: the broker's own screen only).
  * "(own branch)" and "(own trips)" cells are view/edit here; branch scoping and the Driver's
  * own-trips filter (DRIVER_OWN_TRIPS_ONLY) narrow the rows.
  */
 export const PERMISSION_MATRIX: Record<PermissionModule, string> = {
-  customer_profiles: 'NNNNNNNNNNN',
-  customer_profile_intake: 'NNNNNNNNNNN',
-  customer_profile_followup: 'NNNNNNNNNNN',
-  customers: 'FVFFVVVVNFE',
+  customer_profiles: 'NNNNNNNNNNNN',
+  customer_profile_intake: 'NNNNNNNNNNNN',
+  customer_profile_followup: 'NNNNNNNNNNNN',
+  customers: 'FVFFVVVVNFEN',
   // Owner, 2026-10-19: only the Sales & Marketing Manager (and the Administrator) make, edit,
   // approve and cancel rate cards; every other role reads them, for every branch.
-  rates: 'FVVVVVNNNFV',
+  rates: 'FVVVVVNNNFVN',
   // Business model plan 4.1: a rate card's reference costs and expected margin, apart from `rates`
   // so Sales and Operations see a price without its cost and margin.
-  rate_costs: 'FVVNNVNNNFN',
-  quotations: 'FVAFVVNNNFE',
-  bookings: 'FVAFFVVVNFE',
-  shipments: 'FVFVFVVVVVV',
-  consolidation: 'FVFNFVVNNNN',
+  rate_costs: 'FVVNNVNNNFNN',
+  quotations: 'FVAFVVNNNFEN',
+  bookings: 'FVAFFVVVNFEN',
+  shipments: 'FVFVFVVVVVVN',
+  consolidation: 'FVFNFVVNNNNN',
   // Not in annex A (owner, 2026-10-14): adding a booking to an open container of any branch, and
   // nothing else about containers (`container_booking:create`, with bookings:create and
   // bookings:approve). Sales got it so they can ship on an open container; editing, moving or
   // cancelling a container stays consolidation:update, and its costs stay hidden from them.
-  container_booking: 'FNNEENNNNEN',
-  warehouse: 'FVFVVVFVNVN',
-  customs: 'FVFVVVNFNVN',
-  transport_fleet: 'FVFNFVNNNNN',
-  transport_trips: 'FVFVFVVNEVN',
-  pod: 'FVFVFVFNEVN',
-  documents: 'FVFEEEEEEEE',
-  customer_invoices: 'FVAVVFNNNVN',
-  credit_notes: 'FVANNENNNNN',
-  receipts: 'FVVVNFNNNVN',
-  suppliers: 'FVANEFNNNNN',
+  container_booking: 'FNNEENNNNENN',
+  warehouse: 'FVFVVVFVNVNN',
+  customs: 'FVFVVVNFNVNN',
+  transport_fleet: 'FVFNFVNNNNNN',
+  transport_trips: 'FVFVFVVNEVNN',
+  pod: 'FVFVFVFNEVNN',
+  documents: 'FVFEEEEEEEEN',
+  customer_invoices: 'FVAVVFNNNVNN',
+  credit_notes: 'FVANNENNNNNN',
+  receipts: 'FVVVNFNNNVNN',
+  suppliers: 'FVANEFNNNNNN',
   // Business model (docs/plans/02-business-model-batch-1.md 4.1): the network's partners, owned by
   // a branch. Sales and Operations read them; Branch Manager and Sales & Marketing Mgr keep them.
-  partners: 'FVFVVVNNNFV',
+  partners: 'FVFVVVNNNFVN',
   // Business model plan 3.4 and 4.1: a partner's commission contracts (settings only in batch 1).
-  partner_contracts: 'FVVNNVNNNFN',
+  partner_contracts: 'FVVNNVNNNFNN',
   // Plan 07 section 8: Finance makes and cancels statements, the Branch Manager adjusts, and
   // Management and the Sales & Marketing Manager read.
-  partner_commissions: 'FVANNENNNVN',
-  supplier_payments: 'FVANNFNNNNN',
-  expenses: 'FVANEFEEENN',
-  manual_journals: 'FVNNNFNNNNN',
-  chart_of_accounts: 'FVNNNANNNNN',
-  fx_rates: 'FVNNNFNNNNN',
-  shipment_profitability: 'FVVNNVNNNNN',
-  financial_reports: 'FVVNNVNNNNN',
-  operational_reports: 'FVVVVVVVNVN',
-  dashboards: 'FVVVVVNNNVN',
-  alert_settings: 'FNNNNNNNNNN',
+  partner_commissions: 'FVANNENNNVNN',
+  supplier_payments: 'FVANNFNNNNNN',
+  expenses: 'FVANEFEEENNN',
+  manual_journals: 'FVNNNFNNNNNN',
+  chart_of_accounts: 'FVNNNANNNNNN',
+  fx_rates: 'FVNNNFNNNNNN',
+  shipment_profitability: 'FVVNNVNNNNNN',
+  financial_reports: 'FVVNNVNNNNNN',
+  operational_reports: 'FVVVVVVVNVNN',
+  dashboards: 'FVVVVVNNNVNN',
+  alert_settings: 'FNNNNNNNNNNN',
   // Not in annex A (proposed with the commercial cycle): ports, container types, charge types and
   // currencies. Everyone reads them for dropdowns; only the Administrator changes them.
-  master_data: 'FVVVVVVVVVV',
-  users: 'FNNNNNNNNNN',
-  audit_log: 'VVVNNNNNNNN',
-  access_control: 'FNNNNNNNNNN',
+  master_data: 'FVVVVVVVVVVN',
+  users: 'FNNNNNNNNNNN',
+  audit_log: 'VVVNNNNNNNNN',
+  access_control: 'FNNNNNNNNNNN',
   // Plan 04a section 2 (⭐ proposed, in the owner's decisions file): those who book review them.
-  cs_booking_requests: 'FVFFVNNNNFN',
+  cs_booking_requests: 'FVFFVNNNNFNN',
   // Plan 04 section 4.1 (⭐ proposed, in the owner's decisions file): Finance writes the drafts,
   // the Branch Manager approves and retires them (and Management approves), Sales reads them.
-  payment_instructions: 'FAFVNENNNNN',
+  payment_instructions: 'FAFVNENNNNNN',
   // The agent's request (2026-11-03): the owner and Shaker only. The Administrator sees the item;
   // the owner gives agent_admin:view to anyone else on the permissions screen.
-  agent_admin: 'VNNNNNNNNNN',
+  agent_admin: 'VNNNNNNNNNNN',
   // Plan 12 section 3: handover_payment:approve hands goods over without the invoice or payment
   // the handover gate asks for, with a reason. No role holds it; the Administrator grants it.
-  handover_payment: 'NNNNNNNNNNN',
+  handover_payment: 'NNNNNNNNNNNN',
   // Plan 13 sections 2 to 4: Outlet Staff only (the outlet that runs the window): view, receive
   // the goods (create) and take the money (update).
-  window_desk: 'NNNNNNNNNNE',
+  window_desk: 'NNNNNNNNNNEN',
+  // Plan 18, 8: the broker's own screen, his login only.
+  referrer_portal: 'NNNNNNNNNNNE',
 };
 
 /**
@@ -254,7 +264,7 @@ export const NON_GRANTABLE_MODULES: readonly PermissionModule[] = ['users', 'acc
  * filters read the role (the Driver's own trips, Outlet Staff's own outlets). They are given through user_roles only, their
  * team takes no added permission, and their holders take no other team or added permission.
  */
-export const RESTRICTED_ROLES: readonly Role[] = ['DRIVER', 'OUTLET_STAFF'];
+export const RESTRICTED_ROLES: readonly Role[] = ['DRIVER', 'OUTLET_STAFF', 'REFERRER_STAFF'];
 
 /**
  * Restricted roles whose team the owner may widen like any other team (owner, 2026-10-28: the

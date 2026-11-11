@@ -1,6 +1,6 @@
 'use client';
 
-import type { PartnerDto } from '@nolon/shared';
+import type { PartnerChatLinkDto, PartnerDto } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
 import { api } from '@/lib/api';
@@ -30,6 +30,7 @@ export function PartnerDetail({ id }: { id: string }) {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
+  const [chatLink, setChatLink] = useState<PartnerChatLinkDto | null>(null);
 
   if (!partner) {
     return loadNotice ? <Notice notice={loadNotice} /> : <p className="muted">{tc('loading')}</p>;
@@ -56,6 +57,33 @@ export function PartnerDetail({ id }: { id: string }) {
     setNotice(null);
     try {
       setRecord(await api<PartnerDto>(`/partners/${id}/referral-code`, { method: 'POST' }));
+      setNotice({ ok: true, text: tc('saved') });
+    } catch (e) {
+      setNotice({ ok: false, text: failure(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Plan 18, 5: a new private bot link, shown once; the earlier open link stops working. */
+  async function issueChatLink() {
+    setBusy(true);
+    setNotice(null);
+    try {
+      setChatLink(await api<PartnerChatLinkDto>(`/partners/${id}/chat-link`, { method: 'POST' }));
+    } catch (e) {
+      setNotice({ ok: false, text: failure(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revokeChat() {
+    if (!window.confirm(t('chatRevokeConfirm'))) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      setRecord(await api<PartnerDto>(`/partners/${id}/chat-link/revoke`, { method: 'POST' }));
       setNotice({ ok: true, text: tc('saved') });
     } catch (e) {
       setNotice({ ok: false, text: failure(e) });
@@ -98,12 +126,33 @@ export function PartnerDetail({ id }: { id: string }) {
               {t('newReferralCode')}
             </button>
           )}
+          {p.actions.canIssueReferralCode && p.isActive && (
+            <button type="button" disabled={busy} onClick={() => void issueChatLink()}>
+              {t('chatLinkIssue')}
+            </button>
+          )}
+          {p.actions.canIssueReferralCode && p.chatLinkedAt && (
+            <button type="button" disabled={busy} onClick={() => void revokeChat()}>
+              {t('chatRevoke')}
+            </button>
+          )}
           <button type="button" disabled={busy} onClick={() => void run({ isActive: !p.isActive })}>
             {p.isActive ? tc('deactivate') : tc('activate')}
           </button>
         </div>
       )}
 
+      {chatLink && (
+        <div className="card stack">
+          <p>{t('chatLinkOnce')}</p>
+          <code dir="ltr" className="pre">
+            {chatLink.url ?? chatLink.token}
+          </code>
+          <p className="muted">
+            {t('chatLinkExpires', { date: new Date(chatLink.expiresAt).toLocaleString() })}
+          </p>
+        </div>
+      )}
       {editing ? (
         <form className="card stack" autoComplete="off" onSubmit={save}>
           <PartnerFields partner={p} />
@@ -141,6 +190,12 @@ export function PartnerDetail({ id }: { id: string }) {
                 {p.referralWindowDays === null
                   ? t('referralNoLimit')
                   : t('referralDays', { days: p.referralWindowDays })}
+              </dd>
+              <dt>{t('chatLinked')}</dt>
+              <dd>
+                {p.chatLinkedAt
+                  ? t('chatLinkedSince', { date: new Date(p.chatLinkedAt).toLocaleDateString() })
+                  : t('chatNotLinked')}
               </dd>
             </>
           )}

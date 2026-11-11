@@ -164,7 +164,9 @@
     "assistantApprovals": "Assistant approvals",
     "assistantApprovalsTitle": "Assistant approvals: {name}",
     "assistantApprovalsHint": "Drafts the assistant prepares for this user that they may approve or reject inside the assistant chat. They still need the usual permission for each entry. Goods receipts are always approved on the review screen.",
-    "permissionsChanged": "Permissions changed while you were working. Reload the page and try again."
+    "permissionsChanged": "Permissions changed while you were working. Reload the page and try again.",
+    "referrer": "Referral broker",
+    "referrerHint": "The broker this login acts for: it sees only his customers and commissions, and holds no other role."
   },
   "Roles": {
     "ADMINISTRATOR": "Administrator",
@@ -177,7 +179,8 @@
     "CUSTOMS": "Customs",
     "DRIVER": "Driver / Transport",
     "SALES_MARKETING_MANAGER": "Sales & Marketing Manager",
-    "OUTLET_STAFF": "Outlet Staff"
+    "OUTLET_STAFF": "Outlet Staff",
+    "REFERRER_STAFF": "Referral broker (own screen)"
   },
   "Common": {
     "openStandalone": "Open in its own window",
@@ -777,7 +780,13 @@
     "stoppedCancelled": "The shipment was cancelled at this step.",
     "lastUpdate": "Last update",
     "nextStep": "Next step",
-    "drawerClose": "Close"
+    "drawerClose": "Close",
+    "referralBroker": "Referral commission",
+    "referrerReason_FIRST_SHIPMENT": "customer's first shipment",
+    "referrerReason_BROUGHT_IN_PERSON": "brought in person",
+    "broughtBy": "Brought by",
+    "changeBroughtBy": "Change broker",
+    "broughtByReason": "Reason for the change"
   },
   "PublicStatus": {
     "REGISTERED": "Shipment registered",
@@ -1631,6 +1640,7 @@
     "scope_tracking_lookup": "Track by shipment number and phone",
     "scope_marketing_read": "Marketing summary: aggregate numbers only, no customer data",
     "scope_marketing_revenue_read": "Marketing summary: include revenue (needs the marketing summary scope)",
+    "scope_referrers_link": "Referral brokers: link a broker's chat account through his private link",
     "editScopes": "Change scopes",
     "saveScopes": "Save scopes",
     "cancel": "Cancel",
@@ -2284,7 +2294,15 @@
     "referralNoLimit": "No limit",
     "referralDays": "{days, plural, one {# day} other {# days}}",
     "newReferralCode": "New customer code",
-    "newReferralCodeConfirm": "Issue a new code? The old code stops linking new customers; customers already linked stay linked."
+    "newReferralCodeConfirm": "Issue a new code? The old code stops linking new customers; customers already linked stay linked.",
+    "chatLinkIssue": "New bot link",
+    "chatLinkOnce": "Send this private link to the broker. It is shown only now, works once and for 7 days. Opening it in the bot links his Telegram account.",
+    "chatLinkExpires": "Expires {date}",
+    "chatLinked": "Telegram",
+    "chatLinkedSince": "Linked since {date}",
+    "chatNotLinked": "Not linked",
+    "chatRevoke": "Unlink Telegram",
+    "chatRevokeConfirm": "Unlink the broker’s Telegram account? He gets no more notices until he opens a new link."
   },
   "PartnerContracts": {
     "title": "Commission contracts",
@@ -2987,7 +3005,10 @@
     "WINDOW_NO_CASH_ACCOUNT": "This window has no cash account for {currency}. Ask NOLON's accountant to set one.",
     "WINDOW_NOTHING_TO_COLLECT": "Nothing is owed on this booking in {currency}.",
     "WINDOW_OVER_BALANCE": "The customer owes {balance} {currency} on this booking: take no more than that.",
-    "WINDOW_CASH_ACCOUNT_TAKEN": "This cash account already serves another window or currency. Choose another account."
+    "WINDOW_CASH_ACCOUNT_TAKEN": "This cash account already serves another window or currency. Choose another account.",
+    "CUSTOMER_EXISTS": "This phone is already a Nolon customer, so it cannot be added for you.",
+    "TOO_MANY_ATTEMPTS": "Too many refused attempts today. Try again tomorrow.",
+    "NO_BROKER": "This account is not linked to a broker yet. Ask Nolon."
   },
   "Locations": {
     "title": "Ports and cities",
@@ -3221,7 +3242,8 @@
     "module_payment_instructions": "Payment instructions",
     "module_agent_admin": "Bookings agent's admin panel",
     "module_handover_payment": "Hand goods over without payment (with a reason)",
-    "module_window_desk": "Window desk (goods to receive)"
+    "module_window_desk": "Window desk (goods to receive)",
+    "module_referrer_portal": "Referral broker’s own screen"
   },
   "BotRequests": {
     "title": "Bot booking requests",
@@ -3434,6 +3456,7 @@
     "role_SALES_OUTLET": "Sales outlet",
     "role_ORIGIN_CONSOLIDATOR": "Origin consolidator",
     "role_DISTRIBUTOR": "Distributor",
+    "role_REFERRER": "Referral broker",
     "currency": "Currency",
     "amountSigned": "Amount (negative reduces)",
     "reason": "Reason",
@@ -3550,6 +3573,42 @@
     "collectSubmit": "Record the payment",
     "paymentLine": "Receipt {number}: {amount} {currency}",
     "printReceipt": "Print receipt",
-    "printWaybill": "Print waybill"
+    "printWaybill": "Print waybill",
+    "broughtByBroker": "Brought in person by a referral broker (optional)",
+    "brokerSearch": "Broker name or phone",
+    "brokerFind": "Find",
+    "brokerNone": "No broker",
+    "brokerNotFound": "No broker found"
+  },
+  "ReferrerPortal": {
+    "title": "{name}: your customers",
+    "linkHint": "Share this link with people you bring to Nolon. Whoever registers through it becomes your customer.",
+    "addTitle": "Add a customer",
+    "name": "Name",
+    "phone": "Phone (with country code)",
+    "add": "Add",
+    "added": "Customer added.",
+    "customers": "Your customers",
+    "noCustomers": "No customers yet.",
+    "phoneEnd": "Phone",
+    "registered": "Registered",
+    "shipments": "Shipments",
+    "commissions": "Your commissions",
+    "pending": "Not yet on a statement:",
+    "noCommissions": "No commissions yet.",
+    "date": "Date",
+    "customer": "Customer",
+    "reason": "For",
+    "reason_FIRST_SHIPMENT": "First shipment",
+    "reason_BROUGHT_IN_PERSON": "Brought in person",
+    "amount": "Amount",
+    "statements": "Your statements",
+    "noStatements": "No statements yet.",
+    "statement": "Statement",
+    "periodTo": "Up to",
+    "status": "Status",
+    "status_BILLED": "Due",
+    "status_SETTLED": "Paid",
+    "noBroker": "This account is not linked to a broker yet. Ask Nolon."
   }
 }

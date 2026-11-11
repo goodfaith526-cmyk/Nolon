@@ -892,6 +892,11 @@ export const FORM_REFUSALS = [
   // customer code or a first-shipment expiry.
   'REFERRER_KIND_FIXED',
   'NOT_A_REFERRER',
+  // Plan 18, 8: the broker's own screen. The phone is already a customer's (never whose), too
+  // many refused today, or the login acts for no active broker.
+  'CUSTOMER_EXISTS',
+  'TOO_MANY_ATTEMPTS',
+  'NO_BROKER',
   // A booking made from a quotation keeps the quotation's sales outlet.
   'QUOTED_OUTLET_FIXED',
   // A customer segment that is unknown or no longer in use.

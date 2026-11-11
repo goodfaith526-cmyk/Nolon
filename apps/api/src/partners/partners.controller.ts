@@ -1,8 +1,20 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   PARTNER_KINDS,
   REFERRAL_WINDOW_MAX_DAYS,
   type Page,
+  type PartnerChatLinkDto,
   type PartnerDto,
   type PartnerSummaryDto,
 } from '@nolon/shared';
@@ -21,6 +33,7 @@ import {
 } from '../common/validation.js';
 import { email } from '../customers/customer-schemas.js';
 import { PartnersService } from './partners.service.js';
+import { ReferrerChannelsService } from './referrer-channels.service.js';
 
 const listQuery = pageQuery.extend({
   branchId: z.uuid().optional(),
@@ -55,7 +68,10 @@ const updateBody = z
  */
 @Controller('partners')
 export class PartnersController {
-  constructor(private readonly partners: PartnersService) {}
+  constructor(
+    private readonly partners: PartnersService,
+    private readonly channels: ReferrerChannelsService,
+  ) {}
 
   @OutletScoped()
   @Get()
@@ -95,5 +111,27 @@ export class PartnersController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<PartnerDto> {
     return this.partners.issueReferralCode(user, id);
+  }
+
+  /** Plan 18, 5: the broker's private link to bind his chat account, shown once. */
+  @Post(':id/chat-link')
+  @RequirePermission('partners:update')
+  issueChatLink(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<PartnerChatLinkDto> {
+    return this.channels.issueLink(user, id);
+  }
+
+  /** Plan 18, 5: ends the broker's linked chat account. */
+  @Post(':id/chat-link/revoke')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('partners:update')
+  async revokeChatLink(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<PartnerDto> {
+    await this.channels.revokeBinding(user, id);
+    return this.partners.get(user, id);
   }
 }

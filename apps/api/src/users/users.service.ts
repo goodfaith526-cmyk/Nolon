@@ -161,7 +161,7 @@ export class UsersService {
       assertBranchesForRoles(roles, branchIds);
       if (input.branchIds) await assertBranchesExist(tx, input.branchIds);
       // Outlets follow the role: kept while the user stays Outlet Staff, dropped when they leave it.
-      const outletIds = roles.includes('OUTLET_STAFF')
+      const outletIds = roles.some((r) => PARTNER_ROLES.includes(r))
         ? (input.outletIds ?? current.outlets.map((o) => o.partnerId))
         : (input.outletIds ?? []);
       const newlyOutletStaff = !current.roles.some((r) => r.role === 'OUTLET_STAFF');
@@ -304,6 +304,10 @@ export class UsersService {
     outletIds: readonly string[],
     newlyGiven: boolean,
   ): Promise<void> {
+    if (roles.includes('REFERRER_STAFF')) {
+      await assertReferrerStaff(tx, roles, branchIds, outletIds);
+      return;
+    }
     if (!roles.includes('OUTLET_STAFF')) {
       if (outletIds.length > 0) {
         throw new BadRequestException('Sales outlets are only for the Outlet Staff role');
@@ -482,4 +486,36 @@ async function assertNoExtrasForRestricted(tx: Tx, userId: string, roles: readon
       'Remove this person from their teams and added permissions before giving this role',
     );
   }
+}
+
+/** Roles tied to a partner through user_partners (`outletIds`). */
+const PARTNER_ROLES: readonly Role[] = ['OUTLET_STAFF', 'REFERRER_STAFF'];
+
+/**
+ * Plan 18, 8: a broker's own login holds no other role (permissions add up), works in exactly one
+ * branch, and acts for exactly one active referrer of that branch (`outletIds` holds it).
+ */
+async function assertReferrerStaff(
+  tx: Tx,
+  roles: readonly Role[],
+  branchIds: readonly string[],
+  partnerIds: readonly string[],
+): Promise<void> {
+  if (unique(roles).length !== 1) {
+    throw new BadRequestException('Referrer Staff cannot hold another role');
+  }
+  const [branchId] = unique(branchIds);
+  if (unique(branchIds).length !== 1 || !branchId) {
+    throw new BadRequestException('Referrer Staff work in exactly one branch');
+  }
+  const [partnerId] = unique(partnerIds);
+  if (unique(partnerIds).length !== 1 || !partnerId) {
+    throw new BadRequestException('Referrer Staff act for exactly one referral broker');
+  }
+  const referrer = await tx.partner.findFirst({
+    where: { id: partnerId, branchId, kind: 'REFERRER', isActive: true },
+    select: { id: true },
+  });
+  if (!referrer)
+    throw new BadRequestException('Unknown or inactive referral broker of this branch');
 }

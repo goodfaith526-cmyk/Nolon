@@ -5,10 +5,17 @@ import { MasterDataModule } from '../master-data/master-data.module.js';
 import { PayablesModule } from '../payables/payables.module.js';
 import { PartnersController } from './partners.controller.js';
 import { PartnersService } from './partners.service.js';
+import { ReferrerChannelsModule } from './referrer-channels.module.js';
 
 /** Partners of the network: sales outlets, consolidators, overseas agents, distributors. */
 @Module({
-  imports: [AuditModule, CurrenciesModule, MasterDataModule, PayablesModule],
+  imports: [
+    AuditModule,
+    CurrenciesModule,
+    MasterDataModule,
+    PayablesModule,
+    ReferrerChannelsModule,
+  ],
   controllers: [PartnersController],
   providers: [PartnersService],
   exports: [PartnersService],

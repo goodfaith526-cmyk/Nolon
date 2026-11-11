@@ -8,6 +8,7 @@ import { sha256Hex } from '../agent-auth/agent-secrets.js';
 import { todayIn } from '../common/dates.js';
 import { APP_ENV, type AppEnv } from '../config/env.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import type { PartnerKind } from '../generated/prisma/client.js';
 import type { AuthUser } from './auth-user.js';
 import { credentialStamp, lockCredentials } from './credential-lock.js';
 import { normalizeEmail } from './email.js';
@@ -26,10 +27,13 @@ export interface LoginContext {
 const USER_ACCESS = {
   roles: true,
   branches: { select: { branchId: true } },
-  // Outlet Staff (plan 4.2): only active sales outlets count.
+  // Outlet Staff (plan 4.2): only active sales outlets count. Referrer Staff (plan 18, 8): only
+  // an active referrer.
   outlets: {
-    where: { partner: { isActive: true, kind: 'SALES_OUTLET' } },
-    select: { partnerId: true, partner: { select: { branchId: true } } },
+    where: {
+      partner: { isActive: true, kind: { in: ['SALES_OUTLET', 'REFERRER'] as PartnerKind[] } },
+    },
+    select: { partnerId: true, partner: { select: { branchId: true, kind: true } } },
   },
 } as const;
 
@@ -218,7 +222,7 @@ export class AuthService {
       passwordHash: string;
       roles: { role: Role }[];
       branches: { branchId: string }[];
-      outlets: { partnerId: string; partner: { branchId: string } }[];
+      outlets: { partnerId: string; partner: { branchId: string; kind: PartnerKind } }[];
     },
     sessionId: string,
     /** access_state.version, read before `user` was loaded. */
@@ -249,9 +253,20 @@ export class AuthService {
       // to outlets of their own branches.
       allowedOutletIds: roles.includes('OUTLET_STAFF')
         ? user.outlets
-            .filter((o) => allowedBranchIds.includes(o.partner.branchId))
+            .filter(
+              (o) =>
+                o.partner.kind === 'SALES_OUTLET' && allowedBranchIds.includes(o.partner.branchId),
+            )
             .map((o) => o.partnerId)
         : null,
+      // Plan 18, 8: a Referrer Staff user acts for his one active referrer of his branches (none:
+      // his screen shows nothing).
+      ...(roles.includes('REFERRER_STAFF') && {
+        referrerPartnerId:
+          user.outlets.find(
+            (o) => o.partner.kind === 'REFERRER' && allowedBranchIds.includes(o.partner.branchId),
+          )?.partnerId ?? null,
+      }),
     };
   }
 

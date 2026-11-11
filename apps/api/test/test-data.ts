@@ -108,6 +108,10 @@ export async function deleteCommercialTestData(prisma: PrismaService): Promise<v
     data: { referralPartnerId: null },
   });
   await prisma.referralCode.deleteMany({ where: { partner: createdBy } });
+  await prisma.csPartnerNotice.deleteMany({ where: { partner: createdBy } });
+  await prisma.referrerCustomerAttempt.deleteMany({ where: { partner: createdBy } });
+  await prisma.referrerLinkToken.deleteMany({ where: { partner: createdBy } });
+  await prisma.partnerChannelBinding.deleteMany({ where: { partner: createdBy } });
   await prisma.userPartner.deleteMany({ where: { partner: createdBy } });
   await prisma.partnerContract.deleteMany({ where: { partner: createdBy } });
   await prisma.partner.deleteMany({ where: createdBy });

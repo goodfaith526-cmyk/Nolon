@@ -5,6 +5,7 @@ import {
   type GoodsCondition,
   type WindowDeskBookingDto,
   type WindowDeskReceiptRequest,
+  type WindowDeskReferrerDto,
 } from '@nolon/shared';
 import { useTranslations } from 'next-intl';
 import { type FormEvent, useState } from 'react';
@@ -34,6 +35,22 @@ export function WindowReceiptForm({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const booked = row.items.reduce((sum, i) => sum + i.quantity, 0);
+  // Plan 18, 4.3: the referral broker who brought the goods in person, found by name or phone.
+  const [brokerQuery, setBrokerQuery] = useState('');
+  const [brokers, setBrokers] = useState<WindowDeskReferrerDto[] | null>(null);
+
+  async function findBrokers() {
+    try {
+      const q = brokerQuery.trim();
+      setBrokers(
+        await api<WindowDeskReferrerDto[]>(
+          `/window-desk/bookings/${row.bookingId}/referrers${q ? `?q=${encodeURIComponent(q)}` : ''}`,
+        ),
+      );
+    } catch (e) {
+      setNotice({ ok: false, text: failure(e) });
+    }
+  }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -48,6 +65,7 @@ export function WindowReceiptForm({
       partyIdNumber: field(f, 'partyIdNumber').trim() || null,
       note: field(f, 'note').trim() || null,
       extraPackagesConfirmed: f.get('extraPackagesConfirmed') === 'on',
+      broughtByReferrerId: field(f, 'broughtByReferrerId') || null,
     };
     setBusy(true);
     setNotice(null);
@@ -113,6 +131,32 @@ export function WindowReceiptForm({
           <input name="partyIdNumber" maxLength={50} dir="ltr" />
         </label>
       </div>
+      <fieldset className="stack">
+        <legend>{t('broughtByBroker')}</legend>
+        <div className="row">
+          <input
+            type="search"
+            value={brokerQuery}
+            onChange={(e) => setBrokerQuery(e.target.value)}
+            placeholder={t('brokerSearch')}
+            aria-label={t('brokerSearch')}
+            maxLength={60}
+          />
+          <button type="button" onClick={() => void findBrokers()}>
+            {t('brokerFind')}
+          </button>
+        </div>
+        {brokers && (
+          <select name="broughtByReferrerId" defaultValue="" aria-label={t('broughtByBroker')}>
+            <option value="">{brokers.length > 0 ? t('brokerNone') : t('brokerNotFound')}</option>
+            {brokers.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name} ({b.number})
+              </option>
+            ))}
+          </select>
+        )}
+      </fieldset>
       <label className="field">
         <span>{tw('note')}</span>
         <textarea name="note" maxLength={1000} />

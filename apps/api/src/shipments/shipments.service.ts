@@ -1,3 +1,4 @@
+import { ShipmentReferralsService } from './shipment-referrals.service.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import {
   BadRequestException,
@@ -29,6 +30,7 @@ import type {
   ShipmentStatusRequest,
   ShipmentPickPage,
   ShipmentSummaryDto,
+  ShipmentReferrerRequest,
   ShipmentUpdateRequest,
   ShippingMode,
   WarehouseReceiptStatus,
@@ -168,6 +170,9 @@ const details = {
   salesOutlet: partnerRefSelect,
   originConsolidator: partnerRefSelect,
   distributor: partnerRefSelect,
+  referral: {
+    select: { referrerReason: true, broughtBy: partnerRefSelect, referrer: partnerRefSelect },
+  },
   sharedBranches: { ...sharedBranchesSelect, select: { branchId: true, branch: branchRef } },
   items: { orderBy: { lineNo: 'asc' } },
   cargoCorrections: {
@@ -229,6 +234,7 @@ export class ShipmentsService {
     private readonly links: ShipmentLinksRegistry,
     private readonly containers: ShipmentContainerRegistry,
     private readonly commissions: CommissionTriggers,
+    private readonly referrals: ShipmentReferralsService,
     private readonly statusListeners: ShipmentStatusListenersRegistry,
     @Inject(APP_ENV) private readonly env: AppEnv,
     private readonly audit: AuditService,
@@ -581,6 +587,7 @@ export class ShipmentsService {
         salesOutletId: true,
         originConsolidatorId: true,
         distributorId: true,
+        referral: { select: { referrerId: true } },
         branch: { select: { timezone: true } },
         items: {
           orderBy: { lineNo: 'asc' },
@@ -609,6 +616,8 @@ export class ShipmentsService {
         SALES_OUTLET: shipment.salesOutletId,
         ORIGIN_CONSOLIDATOR: shipment.originConsolidatorId,
         DISTRIBUTOR: shipment.distributorId,
+        // Plan 18, 4.1: the slot ShipmentReferralsService.decideReferrerInTx keeps.
+        REFERRER: shipment.referral?.referrerId ?? null,
       },
       items: shipment.items,
       categories: shipment.booking.items.map((i) => i.priceCategoryCode),
@@ -684,6 +693,33 @@ export class ShipmentsService {
       occurredAt: now,
     });
     return created;
+  }
+
+  /**
+   * Plan 18, 4.3: staff correct the broker who brought the shipment in person (null: none), with a
+   * reason (audited): an active referrer of the user's branches. The commission moves by difference
+   * (a first the shipment holds still pays the customer's broker). Not on a cancelled shipment.
+   */
+  async setBroughtBy(
+    user: AuthUser,
+    id: string,
+    input: ShipmentReferrerRequest,
+  ): Promise<ShipmentDto> {
+    const existing = await this.findScoped(user, id);
+    requireAny(user, ['shipments:update'], existing);
+    await this.prisma.$transaction(async (tx) => {
+      const status = await this.lockStatus(tx, id);
+      if (status === 'CANCELLED') {
+        throw new ConflictException('A cancelled shipment keeps its referral as it was');
+      }
+      if (input.partnerId !== null) {
+        await this.partnerRefs.requireReferrerInTx(tx, user, input.partnerId, 'partnerId');
+      }
+      if (await this.referrals.setBroughtByInTx(tx, user, id, input.partnerId, input.reason)) {
+        await this.commissions.shipmentChangedInTx(tx, user, id, 'SHIPMENT_REFERRER');
+      }
+    });
+    return this.get(user, id);
   }
 
   async update(user: AuthUser, id: string, input: ShipmentUpdateRequest): Promise<ShipmentDto> {
@@ -2028,6 +2064,8 @@ export class ShipmentsService {
           .cancelAutoDraftsInTx(tx, shipment.id, `Shipment cancelled: ${reason}`);
         await this.requireNoLiveInvoices(tx, shipment);
         await this.bookingLifecycle.cancelForShipment(tx, shipment.bookingId, reason);
+        // Plan 18, 4.2: a first it held is freed; last, after every other lock of the cancel.
+        await this.referrals.cancelledInTx(tx, user, shipment.id);
       },
     };
   }
@@ -2364,6 +2402,11 @@ export class ShipmentsService {
       salesOutlet: toPartnerRef(s.salesOutlet),
       originConsolidator: toPartnerRef(s.originConsolidator),
       distributor: toPartnerRef(s.distributor),
+      referral: {
+        broughtBy: toPartnerRef(s.referral?.broughtBy ?? null),
+        referrer: toPartnerRef(s.referral?.referrer ?? null),
+        reason: s.referral?.referrerReason ?? null,
+      },
       packages: s.items.reduce((n, i) => n + i.quantity, 0),
       items: s.items.map(toItemDto),
       cargoRevision: s.cargoCorrections.length,

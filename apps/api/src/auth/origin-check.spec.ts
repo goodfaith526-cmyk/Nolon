@@ -64,4 +64,11 @@ describe('originCheck', () => {
     expect(run({ cookie: 'nolon_session=x' }, cancel)).toBe(403);
     expect(run({ authorization: 'Bearer nolcs_abc' }, `${cancel}/x`)).toBe(403);
   });
+
+  it('lets the bot bind a broker’s chat account with a CS key only (plan 18)', () => {
+    const link = '/api/v1/cs/referrers/link';
+    expect(run({ authorization: 'Bearer nolcs_abc' }, link)).toBe(200);
+    expect(run({ authorization: 'Bearer nolct_abc' }, link)).toBe(403);
+    expect(run({ cookie: 'nolon_session=x' }, link)).toBe(403);
+  });
 });
