@@ -1,3 +1,8 @@
+import {
+  HandoffRequestsController,
+  HandoffReviewController,
+} from './handoff-requests.controller.js';
+import { HandoffRequestsService } from './handoff-requests.service.js';
 import { ReferrerChannelsModule } from '../partners/referrer-channels.module.js';
 import { ReferrerLinkController } from './referrer-link.controller.js';
 import { PartnerRefsModule } from '../partners/partner-refs.module.js';
@@ -86,6 +91,8 @@ import { QuoteService } from './quote.service.js';
     CustomerStagesController,
     CsDocumentsController,
     ReferrerLinkController,
+    HandoffRequestsController,
+    HandoffReviewController,
   ],
   providers: [
     CustomerProfileReviewService,
@@ -112,7 +119,13 @@ import { QuoteService } from './quote.service.js';
     CsOutboxWorker,
     { provide: CS_NOTICE_TRANSPORT, useFactory: () => httpsTransport() },
     BookingRequestReportsService,
+    HandoffRequestsService,
   ],
-  exports: [ApiClientGuard, BookingRequestReportsService, BookingReviewService],
+  exports: [
+    ApiClientGuard,
+    BookingRequestReportsService,
+    BookingReviewService,
+    HandoffRequestsService,
+  ],
 })
 export class CustomerServiceModule {}

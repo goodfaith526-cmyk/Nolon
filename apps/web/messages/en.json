@@ -85,7 +85,8 @@
     "paymentInstructions": "Payment instructions",
     "standaloneSignedOut": "Your session has ended. Sign in from the main system window, then reload this window.",
     "agentAdmin": "AI Agents Management",
-    "windowDesk": "Goods to receive"
+    "windowDesk": "Goods to receive",
+    "handoffRequests": "Contact requests"
   },
   "Dashboard": {
     "welcome": "Welcome, {name}",
@@ -1604,7 +1605,11 @@
     "since_TRIP_LATE": "Planned arrival",
     "since_SHIPMENT_NOT_INVOICED": "Since",
     "since_BOOKING_DRAFT_FROM_REQUEST": "Made",
-    "since_DELIVERED_NOT_CLOSED": "Delivered"
+    "since_DELIVERED_NOT_CLOSED": "Delivered",
+    "kind_HANDOFF_REQUEST_OPEN": "Customers asking for staff",
+    "rule_HANDOFF_REQUEST_OPEN": "A contact request from the bot open for {days, plural, =0 {0 days} one {# day} other {# days}} or more, with no one in touch yet.",
+    "detail_HANDOFF_REQUEST_OPEN": "Customer",
+    "since_HANDOFF_REQUEST_OPEN": "Requested"
   },
   "ApiAccess": {
     "title": "API access",
@@ -1679,7 +1684,8 @@
     "outbox_SENDING": "Sending",
     "outbox_SENT": "Sent",
     "outbox_FAILED": "Failed",
-    "outbox_CANCELLED_BY_POLICY": "Cancelled (no longer allowed)"
+    "outbox_CANCELLED_BY_POLICY": "Cancelled (no longer allowed)",
+    "scope_handoff_requests_create": "Contact requests: tell staff that a customer wants a person"
   },
   "Reports": {
     "title": "Financial reports",
@@ -3610,5 +3616,31 @@
     "status_BILLED": "Due",
     "status_SETTLED": "Paid",
     "noBroker": "This account is not linked to a broker yet. Ask Nolon."
+  },
+  "HandoffRequests": {
+    "title": "Contact requests",
+    "intro": "Customers who asked the bot for a person. Call the customer, then press “Contacted”.",
+    "open": "Open",
+    "all": "All",
+    "none": "No requests.",
+    "number": "Number",
+    "customer": "Customer",
+    "phone": "Phone",
+    "reason": "Reason",
+    "channel": "Channel",
+    "branch": "Branch",
+    "allBranches": "All the bot’s branches",
+    "city": "Departure city",
+    "bookingRequest": "Booking request",
+    "time": "Time",
+    "status": "Status",
+    "status_open": "Open",
+    "status_contacted": "Contacted",
+    "contacted": "Contacted",
+    "contactedBy": "{name} contacted",
+    "done": "Contact recorded.",
+    "channel_telegram": "Telegram",
+    "channel_whatsapp": "WhatsApp",
+    "channel_web": "Website"
   }
 }

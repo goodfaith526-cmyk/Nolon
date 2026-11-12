@@ -18,6 +18,8 @@ export function alertHref(alert: AlertDto): string {
       return `/trips/${alert.refId}`;
     case 'BOOKING_DRAFT_FROM_REQUEST':
       return `/bookings/${alert.refId}`;
+    case 'HANDOFF_REQUEST_OPEN':
+      return '/cs-handoff-requests';
     default:
       return `/shipments/${alert.refId}`;
   }

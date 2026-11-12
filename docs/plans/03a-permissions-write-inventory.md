@@ -82,6 +82,7 @@
 - POST `/cs-booking-requests/:id/items/:itemId/resolve` · `BookingReviewController.resolveItem` · `customer-service/booking-review.controller.ts` · bookings:update
 - POST `/cs-booking-requests/:id/reject` · `BookingReviewController.reject` · `customer-service/booking-review.controller.ts` · cs_booking_requests:approve
 - POST `/cs-booking-requests/:id/route` · `BookingReviewController.route` · `customer-service/booking-review.controller.ts` · cs_booking_requests:update
+- POST `/cs-handoff-requests/:id/contacted` · `HandoffReviewController.contacted` · `customer-service/handoff-requests.controller.ts` · cs_booking_requests:update
 - PUT `/cs-reject-reasons/:code` · `RejectReasonsController.set` · `customer-service/booking-review.controller.ts` · master_data:update
 - POST `/cs/booking-requests` · `BookingRequestsController.create` · `customer-service/customer-service.controller.ts` · —
 - POST `/cs/booking-requests/:id/accept-estimate` · `BookingRequestsController.acceptEstimate` · `customer-service/customer-service.controller.ts` · —
@@ -91,6 +92,7 @@
 - POST `/cs/customer-profiles/:id/follow-up` · `CustomerIdentityController.followUp` · `customer-service/customer-identity.controller.ts` · —
 - POST `/cs/customer-profiles/capture` · `CustomerIdentityController.capture` · `customer-service/customer-identity.controller.ts` · —
 - POST `/cs/customer-tokens` · `CustomerTokensController.issue` · `customer-service/customer-service.controller.ts` · —
+- POST `/cs/handoff-requests` · `HandoffRequestsController.create` · `customer-service/handoff-requests.controller.ts` · —
 - POST `/cs/quotations` · `QuotationSaveController.save` · `customer-service/customer-service.controller.ts` · —
 - POST `/cs/quotes` · `QuotesController.quote` · `customer-service/customer-service.controller.ts` · —
 - POST `/cs/referrers/link` · `ReferrerLinkController.link` · `customer-service/referrer-link.controller.ts` · —
