@@ -59,6 +59,7 @@ const ALERT_TONE: Record<AlertKind, ActionItem['tone']> = {
   INVOICE_OVERDUE: 'bad',
   SHIPMENT_NOT_INVOICED: 'warn',
   BOOKING_DRAFT_FROM_REQUEST: 'warn',
+  HANDOFF_REQUEST_OPEN: 'bad',
   DELIVERED_NOT_CLOSED: 'warn',
   SHIPMENT_PAST_ETA: 'bad',
   TRIP_LATE: 'bad',

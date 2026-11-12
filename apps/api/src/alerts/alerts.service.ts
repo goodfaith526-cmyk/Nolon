@@ -14,6 +14,7 @@ import { BillingReportsService } from '../billing/billing-reports.service.js';
 import type { AlertRows } from '../common/alert-rows.js';
 import { CustomsReportsService } from '../customs/customs-reports.service.js';
 import { BookingRequestReportsService } from '../customer-service/booking-request-reports.service.js';
+import { HandoffRequestsService } from '../customer-service/handoff-requests.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { ShipmentReportsService } from '../shipments/shipment-reports.service.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
@@ -31,6 +32,8 @@ const DEFAULT_DAYS: Partial<Record<AlertKind, number>> = {
   SHIPMENT_NOT_INVOICED: 0,
   BOOKING_DRAFT_FROM_REQUEST: 1,
   DELIVERED_NOT_CLOSED: 3,
+  // From the day it is made: a customer is waiting for a person.
+  HANDOFF_REQUEST_OPEN: 0,
 };
 
 /** Alerts whose rows point at a shipment by id only: its number comes from the shipments module. */
@@ -52,6 +55,7 @@ export class AlertsService {
     private readonly warehouse: WarehouseReportsService,
     private readonly trips: TripReportsService,
     private readonly bookingRequests: BookingRequestReportsService,
+    private readonly handoffs: HandoffRequestsService,
   ) {}
 
   /** The alerts this user is concerned by, each kind with its rows (most urgent first). */
@@ -155,6 +159,8 @@ export class AlertsService {
         return this.shipmentReports.deliveredNotClosed(user, days, ALERT_LIST_LIMIT);
       case 'BOOKING_DRAFT_FROM_REQUEST':
         return this.bookingRequests.draftBookings(user, days, ALERT_LIST_LIMIT);
+      case 'HANDOFF_REQUEST_OPEN':
+        return this.handoffs.openAlerts(user, days, ALERT_LIST_LIMIT);
     }
   }
 

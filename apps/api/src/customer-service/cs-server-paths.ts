@@ -8,4 +8,6 @@ export const CS_SERVER_PATHS = [
   'cs/booking-requests',
   'cs/quotes',
   'cs/quotations',
+  // 2026-11-12: a customer's request for a person.
+  'cs/handoff-requests',
 ] as const;

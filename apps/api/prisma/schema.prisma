@@ -26,6 +26,7 @@ model SystemSetting {
 /// Operating branch (DXB, JED, PTS, ATB, KRT). Root of branch scoping: branch-owned tables
 /// reference it. Codes must match BRANCH_CODES in @nolon/shared.
 model Branch {
+  handoffRequests       CsHandoffRequest[]
   followedProfiles      CustomerProfile[]         @relation("CustomerProfileFollowUp")
   profileFollowUpRules  CustomerFollowUpRule[]    @relation("CustomerProfileRuleBranch")
   profileFollowUpBefore CustomerFollowUpHistory[] @relation("CustomerProfileHistoryBefore")
@@ -193,19 +194,20 @@ enum Role {
 /// Staff user who signs in to the web app. A user can hold several roles and several branches;
 /// permissions add up across roles.
 model User {
-  profileReviews  CustomerProfileReview[] @relation("CustomerProfileReviewActor")
-  id              String                  @id @default(uuid()) @db.Uuid
+  handoffsContacted CsHandoffRequest[]      @relation("CsHandoffContactedBy")
+  profileReviews    CustomerProfileReview[] @relation("CustomerProfileReviewActor")
+  id                String                  @id @default(uuid()) @db.Uuid
   /// Stored lower-cased and trimmed; the sign-in lookup normalizes the same way.
-  email           String                  @unique @db.VarChar(254)
-  fullName        String                  @map("full_name") @db.VarChar(200)
+  email             String                  @unique @db.VarChar(254)
+  fullName          String                  @map("full_name") @db.VarChar(200)
   /// scrypt hash in the form scrypt$N$r$p$salt$hash (base64). Never the plain password.
-  passwordHash    String                  @map("password_hash")
+  passwordHash      String                  @map("password_hash")
   /// "ar" or "en", one of LOCALES in @nolon/shared.
-  preferredLocale String                  @default("ar") @map("preferred_locale") @db.VarChar(5)
-  isActive        Boolean                 @default(true) @map("is_active")
-  lastLoginAt     DateTime?               @map("last_login_at") @db.Timestamptz(3)
-  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt       DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+  preferredLocale   String                  @default("ar") @map("preferred_locale") @db.VarChar(5)
+  isActive          Boolean                 @default(true) @map("is_active")
+  lastLoginAt       DateTime?               @map("last_login_at") @db.Timestamptz(3)
+  createdAt         DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   roles                UserRole[]
   branches             UserBranch[]
@@ -3676,6 +3678,7 @@ enum AlertKind {
   BOOKING_DRAFT_FROM_REQUEST
   DELIVERED_NOT_CLOSED
   SHIPMENT_ARRIVING_SOON
+  HANDOFF_REQUEST_OPEN
 
   @@map("alert_kind")
 }
@@ -3733,6 +3736,7 @@ model ApiClient {
 
   partnerBindings PartnerChannelBinding[]
   partnerNotices  CsPartnerNotice[]
+  handoffRequests CsHandoffRequest[]
 
   @@map("api_clients")
 }
@@ -3752,6 +3756,8 @@ enum ApiScope {
   MARKETING_REVENUE_READ
   /// Plan 18, 5: links a referral broker's chat account through his private link.
   REFERRERS_LINK
+  /// 2026-11-12: sends a customer's request for a person to staff (cs_handoff_requests).
+  HANDOFF_REQUESTS_CREATE
 
   @@map("api_scope")
 }
@@ -5611,4 +5617,48 @@ model ReferrerCustomerAttempt {
 
   @@index([partnerId, createdAt])
   @@map("referrer_customer_attempts")
+}
+
+enum CsHandoffStatus {
+  OPEN
+  CONTACTED
+
+  @@map("cs_handoff_status")
+}
+
+/// 2026-11-12 (owner: staff are told inside the system, not in a Telegram group): a customer asked
+/// the bot for a person. Made once per key and idempotency key; staff of its branch (or, when the
+/// city named no single branch, of any branch the key served) mark it contacted.
+model CsHandoffRequest {
+  id                String          @id @default(uuid()) @db.Uuid
+  /// NOL-HR-000001.
+  number            String          @unique @db.VarChar(20)
+  apiClientId       String          @map("api_client_id") @db.Uuid
+  idempotencyKey    String          @map("idempotency_key") @db.VarChar(100)
+  /// SHA-256 of the body without its idempotency key: a replay with other content is refused.
+  contentHash       String          @map("content_hash") @db.Char(64)
+  channel           String          @db.VarChar(20)
+  senderId          String          @map("sender_id") @db.VarChar(64)
+  customerName      String?         @map("customer_name") @db.VarChar(200)
+  customerPhone     String?         @map("customer_phone") @db.VarChar(20)
+  /// One line the bot wrote for staff.
+  reason            String          @db.VarChar(300)
+  bookingRequestRef String?         @map("booking_request_ref") @db.VarChar(20)
+  /// The departure city as the bot named it.
+  branchHint        String?         @map("branch_hint") @db.VarChar(100)
+  /// The one branch the city routes to among the key's; null: every branch in allowedBranchIds.
+  branchId          String?         @map("branch_id") @db.Uuid
+  allowedBranchIds  String[]        @map("allowed_branch_ids") @db.Uuid
+  status            CsHandoffStatus @default(OPEN)
+  contactedById     String?         @map("contacted_by_id") @db.Uuid
+  contactedAt       DateTime?       @map("contacted_at") @db.Timestamptz(3)
+  createdAt         DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  apiClient   ApiClient @relation(fields: [apiClientId], references: [id], onDelete: Restrict)
+  branch      Branch?   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  contactedBy User?     @relation("CsHandoffContactedBy", fields: [contactedById], references: [id], onDelete: Restrict)
+
+  @@unique([apiClientId, idempotencyKey])
+  @@index([status, branchId])
+  @@map("cs_handoff_requests")
 }
