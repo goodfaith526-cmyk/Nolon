@@ -30,7 +30,8 @@ describe('Customer Service handoff requests', () => {
   let bot: ApiClientCreatedDto;
   let otherBot: ApiClientCreatedDto;
   let noScope: ApiClientCreatedDto;
-  const cookies = { admin: '', ptsSales: '', jedSales: '', viewer: '' };
+  const cookies = { admin: '', ptsSales: '', jedSales: '', dxbSales: '', viewer: '' };
+  let ptsBot: ApiClientCreatedDto;
   let cityAr = '';
 
   const post = (path: string, cookie: string, body: object = {}) =>
@@ -79,6 +80,10 @@ describe('Customer Service handoff requests', () => {
       t,
       (await createUser(t.prisma, ['SALES'], ['JED'], LEDGER_PREFIX)).email,
     );
+    cookies.dxbSales = await signIn(
+      t,
+      (await createUser(t.prisma, ['SALES'], ['DXB'], LEDGER_PREFIX)).email,
+    );
     cookies.viewer = await signIn(
       t,
       (await createUser(t.prisma, ['DRIVER'], ['PTS'], LEDGER_PREFIX)).email,
@@ -86,6 +91,7 @@ describe('Customer Service handoff requests', () => {
     bot = await makeKey([pts, jed], ['cs:handoff_requests:create']);
     otherBot = await makeKey([pts, jed], ['cs:handoff_requests:create']);
     noScope = await makeKey([pts], ['cs:catalog:read']);
+    ptsBot = await makeKey([pts], ['cs:handoff_requests:create']);
 
     const tag = `H${randomUUID().slice(0, 5).toUpperCase()}`;
     cityAr = `مدينة ${tag}`;
@@ -145,6 +151,9 @@ describe('Customer Service handoff requests', () => {
     expect((await list(cookies.ptsSales)).some((r) => r.id === made.id)).toBe(false);
     // Out of their branches: not found, and nothing changes.
     await post(`/cs-handoff-requests/${made.id}/contacted`, cookies.ptsSales).expect(404);
+    const kept = await t.prisma.csHandoffRequest.findUniqueOrThrow({ where: { id: made.id } });
+    expect(kept.status).toBe('OPEN');
+    expect(kept.contactedById).toBeNull();
   });
 
   it('an unknown city goes to every branch of the key', async () => {
@@ -188,6 +197,39 @@ describe('Customer Service handoff requests', () => {
       .get(`/api/v1/cs/handoff-requests/${made.id}`)
       .set('Authorization', `Bearer ${otherBot.key}`)
       .expect(404);
+  });
+
+  it('keeps an unrouted request from branches the key does not serve (list, bell, contacted)', async () => {
+    const made = (await send(ptsBot.key, body()).expect(201)).body as CsHandoffCreated;
+    expect((await list(cookies.ptsSales)).some((r) => r.id === made.id)).toBe(true);
+    for (const cookie of [cookies.dxbSales, cookies.jedSales]) {
+      expect((await list(cookie, 'all')).some((r) => r.id === made.id)).toBe(false);
+      const bell = (await get('/alerts', cookie).expect(200)).body as AlertsDto;
+      expect(bell.groups.flatMap((g) => g.items).some((a) => a.refId === made.id)).toBe(false);
+      await post(`/cs-handoff-requests/${made.id}/contacted`, cookie).expect(404);
+    }
+    const kept = await t.prisma.csHandoffRequest.findUniqueOrThrow({ where: { id: made.id } });
+    expect(kept.status).toBe('OPEN');
+    expect(kept.contactedById).toBeNull();
+  });
+
+  it('makes one request when the same key arrives twice at once', async () => {
+    const b = body();
+    const [one, two] = await Promise.all([send(bot.key, b), send(bot.key, b)]);
+    expect([one.status, two.status].sort()).toEqual([200, 201]);
+    expect((one.body as CsHandoffCreated).id).toBe((two.body as CsHandoffCreated).id);
+    const c = body();
+    const [first, second] = await Promise.all([
+      send(bot.key, c),
+      send(bot.key, { ...c, reason: 'سبب مختلف' }),
+    ]);
+    expect([first.status, second.status].sort()).toEqual([201, 409]);
+    expect(code(first.status === 409 ? first : second)).toBe('IDEMPOTENCY_CONFLICT');
+    expect(
+      await t.prisma.csHandoffRequest.count({
+        where: { idempotencyKey: { in: [b.idempotencyKey, c.idempotencyKey] } },
+      }),
+    ).toBe(2);
   });
 
   it('refuses staff without the permission', async () => {
