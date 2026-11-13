@@ -16,7 +16,7 @@ import type { CookieOptions, Request, Response } from 'express';
 import { z } from 'zod';
 import type { AuthUser } from './auth-user.js';
 import { AuthService } from './auth.service.js';
-import { AgentReadable, CurrentUser, OutletScoped, Public } from './decorators.js';
+import { AgentReadable, CurrentUser, OutletScoped, Public, ReferrerScoped } from './decorators.js';
 import { SESSION_COOKIE, readCookie } from './session-token.js';
 
 const loginBody = z.object({
@@ -74,6 +74,7 @@ export class AuthController {
   }
 
   @OutletScoped()
+  @ReferrerScoped()
   @Post('password')
   @HttpCode(HttpStatus.NO_CONTENT)
   async changePassword(@CurrentUser() user: AuthUser, @Body() body: unknown): Promise<void> {
@@ -92,6 +93,7 @@ export class AuthController {
   }
 
   @OutletScoped()
+  @ReferrerScoped()
   @AgentReadable()
   @Get('me')
   me(@CurrentUser() user: AuthUser): Promise<AuthMeResponse> {

@@ -59,7 +59,8 @@ interface NavLink {
     | 'assistantDrafts'
     | 'botRequests'
     | 'windowDesk'
-    | 'pallets';
+    | 'pallets'
+    | 'handoffRequests';
   icon: keyof typeof icons;
   /** Shown with this permission, or with any of these. */
   permission?: Permission | readonly Permission[];
@@ -108,6 +109,12 @@ const NAV_SECTIONS: readonly {
           'cs_booking_requests:update',
           'cs_booking_requests:approve',
         ],
+      },
+      {
+        href: '/cs-handoff-requests',
+        label: 'handoffRequests',
+        icon: 'assistant',
+        permission: 'cs_booking_requests:view',
       },
       { href: '/customers', label: 'customers', icon: 'customers', permission: 'customers:view' },
       { href: '/partners', label: 'partners', icon: 'carrier', permission: 'partners:view' },

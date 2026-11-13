@@ -39,6 +39,32 @@ interface Leased {
   createdAt: Date;
 }
 
+interface LeasedPartnerNotice {
+  id: string;
+  apiClientId: string;
+  partnerId: string;
+  payload: { referrer?: { channel?: unknown; externalId?: unknown } };
+  attempts: number;
+  createdAt: Date;
+}
+
+/**
+ * Plan 18, 7: a 2xx answer `{ delivered: false, reason }` means the bot could not reach the broker
+ * (NO_CHAT, BLOCKED, NOTICES_OFF): recorded, not retried. Null when delivered or unreadable.
+ */
+export function undeliveredReason(body: string | undefined): string | null {
+  if (!body) return null;
+  try {
+    const answer: unknown = JSON.parse(body);
+    if (typeof answer !== 'object' || answer === null) return null;
+    const { delivered, reason } = answer as { delivered?: unknown; reason?: unknown };
+    if (delivered !== false) return null;
+    return typeof reason === 'string' && /^[A-Z_]{1,40}$/.test(reason) ? reason : 'UNKNOWN';
+  } catch {
+    return null;
+  }
+}
+
 export interface OutboxRound {
   leased: number;
   sent: number;
@@ -104,10 +130,13 @@ export class CsOutboxWorker implements OnApplicationBootstrap, OnApplicationShut
       if (this.running) return;
       this.running = true;
       this.runOnce()
+        .then(async (round) => {
+          if (round.leased > 0) this.logger.log(`Outbox round: ${JSON.stringify(round)}`);
+          const partners = await this.runPartnerNoticesOnce();
+          if (partners.leased > 0) this.logger.log(`Partner notices: ${JSON.stringify(partners)}`);
+        })
         .then(
-          (round) => {
-            if (round.leased > 0) this.logger.log(`Outbox round: ${JSON.stringify(round)}`);
-          },
+          () => undefined,
           (error: unknown) => this.logger.error('Outbox round failed', error),
         )
         .finally(() => {
@@ -192,6 +221,119 @@ export class CsOutboxWorker implements OnApplicationBootstrap, OnApplicationShut
       else round.retried += 1;
     }
     return round;
+  }
+
+  /**
+   * Plan 18, 6: the notices to referral brokers (cs_partner_notices), leased and sent like the
+   * outbox. Before each send the key must still be active with `cs:referrers:link`, the broker
+   * still an active referrer bound to the same chat account through that key, and the endpoint
+   * still approved; otherwise CANCELLED_BY_POLICY. The receiver answers 200 with `delivered`:
+   * `false` (no chat, blocked, its notices off) is recorded with its reason and never retried.
+   * Nothing is leased while CS_REFERRER_NOTICES_ENABLED is off.
+   */
+  async runPartnerNoticesOnce(now: Date = new Date()): Promise<OutboxRound> {
+    const round: OutboxRound = { leased: 0, sent: 0, retried: 0, failed: 0, cancelled: 0 };
+    const secret = this.env.CS_WEBHOOK_SECRET;
+    if (!secret || !this.env.CS_REFERRER_NOTICES_ENABLED) return round;
+    const leased = await this.prisma.$queryRaw<LeasedPartnerNotice[]>`
+      UPDATE "cs_partner_notices" SET "status" = 'SENDING',
+        "lease_until" = ${now}::timestamptz + make_interval(secs => ${LEASE_SECONDS}),
+        "attempts" = "attempts" + 1
+      WHERE "id" IN (
+        SELECT "id" FROM "cs_partner_notices"
+        WHERE "status" IN ('PENDING', 'SENDING')
+          AND ("lease_until" IS NULL OR "lease_until" < ${now}::timestamptz)
+          AND "next_attempt_at" <= ${now}::timestamptz
+        ORDER BY "next_attempt_at", "id"
+        FOR UPDATE SKIP LOCKED
+        LIMIT ${BATCH})
+      RETURNING "id"::text AS "id", "api_client_id"::text AS "apiClientId",
+        "partner_id"::text AS "partnerId", "payload", "attempts", "created_at" AS "createdAt"`;
+    round.leased = leased.length;
+    for (const notice of leased) {
+      if (this.clock().getTime() > notice.createdAt.getTime() + GIVE_UP_MS) {
+        await this.recordPartner(notice, { status: 'FAILED', lastError: 'EXPIRED' });
+        round.failed += 1;
+        continue;
+      }
+      const endpoint = await this.partnerEndpoint(notice);
+      if (!endpoint) {
+        await this.recordPartner(notice, { status: 'CANCELLED_BY_POLICY', lastError: 'POLICY' });
+        round.cancelled += 1;
+        continue;
+      }
+      const body = Buffer.from(JSON.stringify(notice.payload), 'utf8');
+      const timestamp = Math.floor(Date.now() / 1000);
+      const result = await this.transport.send(
+        endpoint.url,
+        noticeHeaders(secret, endpoint.audience, notice.apiClientId, timestamp, body),
+        body,
+      );
+      const outcome = outcomeOf(result, notice.attempts, notice.createdAt, new Date());
+      const undelivered = outcome.status === 'SENT' ? undeliveredReason(result.body) : null;
+      await this.recordPartner(notice, {
+        status: outcome.status,
+        nextAttemptAt: outcome.nextAttemptAt ?? undefined,
+        sentAt: outcome.status === 'SENT' ? new Date() : undefined,
+        lastStatus: result.status,
+        lastError: result.error,
+        undeliveredReason: undelivered,
+      });
+      if (outcome.status === 'SENT') round.sent += 1;
+      else if (outcome.status === 'FAILED') round.failed += 1;
+      else round.retried += 1;
+    }
+    return round;
+  }
+
+  private async partnerEndpoint(
+    notice: LeasedPartnerNotice,
+  ): Promise<{ url: string; audience: string } | null> {
+    const key = await this.prisma.apiClient.findUnique({
+      where: { id: notice.apiClientId },
+      select: {
+        isActive: true,
+        scopes: { where: { scope: 'REFERRERS_LINK' }, select: { scope: true } },
+      },
+    });
+    if (!key?.isActive || key.scopes.length === 0) return null;
+    const referrer = notice.payload.referrer;
+    const binding = await this.prisma.partnerChannelBinding.findFirst({
+      where: {
+        partnerId: notice.partnerId,
+        apiClientId: notice.apiClientId,
+        revokedAt: null,
+        channel: typeof referrer?.channel === 'string' ? referrer.channel.toUpperCase() : '',
+        subjectId: typeof referrer?.externalId === 'string' ? referrer.externalId : '',
+        partner: { kind: 'REFERRER', isActive: true },
+      },
+      select: { id: true },
+    });
+    if (!binding) return null;
+    const endpoint = await this.prisma.csWebhookEndpoint.findFirst({
+      where: { apiClientId: notice.apiClientId, status: 'APPROVED' },
+      select: { url: true, audience: true },
+    });
+    if (!endpoint || 'problem' in checkEndpointUrl(endpoint.url, this.env.CS_WEBHOOK_ALLOWED_HOSTS))
+      return null;
+    return endpoint;
+  }
+
+  private async recordPartner(
+    notice: LeasedPartnerNotice,
+    data: {
+      status: string;
+      nextAttemptAt?: Date;
+      sentAt?: Date;
+      lastStatus?: number | null;
+      lastError?: string | null;
+      undeliveredReason?: string | null;
+    },
+  ): Promise<void> {
+    await this.prisma.csPartnerNotice.updateMany({
+      where: { id: notice.id, status: 'SENDING', attempts: notice.attempts },
+      data: { ...data, leaseUntil: null, lastError: data.lastError?.slice(0, 300) ?? null },
+    });
   }
 
   /** The approved endpoint, when the key may still be told about this request. */

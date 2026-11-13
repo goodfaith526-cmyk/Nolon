@@ -45,10 +45,11 @@ export function originCheck(
   const exempt = new Set(exemptPaths);
   return (req: Request, res: Response, next: NextFunction): void => {
     // Profile paths accept only bearer keys plus the trusted channel signature, never cookies.
+    // Plan 18, 5: the bot binding a broker's chat account is signed the same way.
     const profilePath =
       /^\/api\/v1\/cs\/customer-profiles\/(?:capture|[0-9a-f-]{36}(?:\/follow-up)?)$/.test(
         req.path,
-      );
+      ) || req.path === '/api/v1/cs/referrers/link';
     // Plan 09: a customer's cancel, photo or acceptance of an estimate, by the bot's key or a
     // customer token, never by a cookie.
     const cancelPath =

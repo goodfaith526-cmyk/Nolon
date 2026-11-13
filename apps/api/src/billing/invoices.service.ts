@@ -63,6 +63,7 @@ import {
   ShipmentInvoicesRegistry,
 } from '../shipments/shipment-invoices.registry.js';
 import { ShipmentsService } from '../shipments/shipments.service.js';
+import { ShipmentReferralsService } from '../shipments/shipment-referrals.service.js';
 import { CommissionTriggers } from '../shipments/commission-triggers.registry.js';
 import { AccountsService } from '../accounting/accounts.service.js';
 import type { CommissionInvoice } from '../commissions/commission-math.js';
@@ -224,6 +225,7 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
     private readonly rates: RatesService,
     private readonly shipmentInvoices: ShipmentInvoicesRegistry,
     private readonly commissions: CommissionTriggers,
+    private readonly referrals: ShipmentReferralsService,
     private readonly accounts: AccountsService,
     private readonly credit: CreditLimitService,
   ) {}
@@ -1483,6 +1485,9 @@ export class InvoicesService implements ShipmentInvoicesHandler, OnModuleInit {
           : {}),
       },
     });
+    // Plan 18, 4.2: the shipment's first approved invoice may take its customer's first paid
+    // shipment for the customer's broker (after this invoice's and the shipment's locks).
+    await this.referrals.invoiceApprovedInTx(tx, actor, shipmentId, id, invoiceDate);
     // The INVOICED event, and a percentage's base (plan 07, 4.2), on the invoice's date.
     await this.commissions.shipmentChangedInTx(
       tx,

@@ -304,6 +304,7 @@ describe('internal alerts', () => {
       'SHIPMENT_NOT_INVOICED',
       'BOOKING_DRAFT_FROM_REQUEST',
       'DELIVERED_NOT_CLOSED',
+      'HANDOFF_REQUEST_OPEN',
     ]);
     const late = find(ops, 'SHIPMENT_PAST_ETA', ids.late);
     expect(late).toMatchObject({ branchCode: 'DXB', detail: customer.name, since: old });
@@ -461,6 +462,8 @@ describe('internal alerts', () => {
       'SHIPMENT_NOT_INVOICED',
       'BOOKING_DRAFT_FROM_REQUEST',
       'DELIVERED_NOT_CLOSED',
+      // 2026-11-12: from the day a customer asks for a person.
+      'HANDOFF_REQUEST_OPEN',
     ]);
     await get('/alerts/settings', cookies.management).expect(403);
     await get('/alerts/settings', cookies.managerDxb).expect(403);

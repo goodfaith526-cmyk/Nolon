@@ -20,6 +20,8 @@ export const ALERT_KINDS = [
   'BOOKING_DRAFT_FROM_REQUEST',
   // Plan 12 section 7: delivered and not closed.
   'DELIVERED_NOT_CLOSED',
+  // 2026-11-12: a customer asked the bot for a person and no one has contacted them yet.
+  'HANDOFF_REQUEST_OPEN',
 ] as const;
 export type AlertKind = (typeof ALERT_KINDS)[number];
 
@@ -34,6 +36,7 @@ export const ALERT_PERMISSIONS: Record<AlertKind, Permission> = {
   SHIPMENT_NOT_INVOICED: 'customer_invoices:view',
   BOOKING_DRAFT_FROM_REQUEST: 'bookings:view',
   DELIVERED_NOT_CLOSED: 'shipments:view',
+  HANDOFF_REQUEST_OPEN: 'cs_booking_requests:view',
 };
 
 /** The longest wait an alert can be set to, in days. */

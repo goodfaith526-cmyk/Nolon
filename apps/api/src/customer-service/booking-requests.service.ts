@@ -79,6 +79,13 @@ export const placeSelect = {
   city: { select: { nameAr: true, nameEn: true } },
 } as const;
 
+/** A container's vessel and its two ports, for the customer's stage (plan 15-2). */
+export const containerSelect = {
+  vesselName: true,
+  origin: { select: { nameAr: true, nameEn: true } },
+  destination: { select: { nameAr: true, nameEn: true } },
+} as const;
+
 /** A request's route as the bot named it (bot_names), each end null when not stored as names. */
 export function storedBotNames(value: unknown): {
   origin: { ar: string; en: string } | null;
@@ -111,6 +118,14 @@ const trackedBookingSelect = {
         select: { occurredAt: true },
         orderBy: { occurredAt: 'desc' },
         take: 1,
+      },
+      // Plan 15-2: the vessel and the container's ports the bot names.
+      vesselName: true,
+      consolidationLinks: {
+        where: { consolidation: { status: { not: 'CANCELLED' } } },
+        orderBy: { addedAt: 'desc' },
+        take: 1,
+        select: { consolidation: { select: containerSelect } },
       },
     },
   },
@@ -146,6 +161,8 @@ function rowTrack(
           destination: shipment.destination,
           currentLocation: shipment.currentLocation,
           updatedAt: shipment.events[0]?.occurredAt ?? shipment.createdAt,
+          vesselName: shipment.vesselName,
+          container: shipment.consolidationLinks[0]?.consolidation ?? null,
         },
       },
     },

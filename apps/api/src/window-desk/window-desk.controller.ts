@@ -1,5 +1,9 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
-import { WINDOW_DESK_FILTERS, type WindowDeskBookingDto } from '@nolon/shared';
+import {
+  WINDOW_DESK_FILTERS,
+  type WindowDeskBookingDto,
+  type WindowDeskReferrerDto,
+} from '@nolon/shared';
 import { z } from 'zod';
 import type { AuthUser } from '../auth/auth-user.js';
 import { CurrentUser, OutletScoped, RequirePermission } from '../auth/decorators.js';
@@ -21,7 +25,11 @@ const expectedQuery = z
  */
 const windowReceiptBody = receiptBody
   .omit({ warehouseId: true, storageLocationId: true, shipmentStatus: true })
+  .extend({ broughtByReferrerId: z.uuid().nullish() })
   .strict();
+
+/** Plan 18, 4.3: the brokers to pick from, by name or phone. */
+const referrersQuery = z.object({ q: optionalText(60) }).strict();
 
 /** Plan 13 section 4: what the window took; the server allocates it (F202-2). */
 const paymentBody = z
@@ -71,6 +79,17 @@ export class WindowDeskController {
     @Body() body: unknown,
   ): Promise<WindowDeskBookingDto> {
     return this.desk.receive(user, id, parse(windowReceiptBody, body));
+  }
+
+  @OutletScoped()
+  @Get('bookings/:id/referrers')
+  @RequirePermission('window_desk:create')
+  referrers(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: unknown,
+  ): Promise<WindowDeskReferrerDto[]> {
+    return this.desk.referrers(user, id, parse(referrersQuery, query).q ?? null);
   }
 
   @OutletScoped()

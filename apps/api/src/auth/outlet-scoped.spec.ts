@@ -60,6 +60,8 @@ const OPEN = [
   'shipments/shipments.controller.ts GET ',
   'shipments/shipments.controller.ts GET :id',
   'window-desk/window-desk.controller.ts GET bookings/:id',
+  // Plan 18, 4.3: the brokers of the booking's branch the window picks from at receipt.
+  'window-desk/window-desk.controller.ts GET bookings/:id/referrers',
   'window-desk/window-desk.controller.ts GET expected',
   'window-desk/window-desk.controller.ts POST bookings/:id/payment',
   'window-desk/window-desk.controller.ts POST bookings/:id/receipt',

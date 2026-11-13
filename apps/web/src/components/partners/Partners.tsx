@@ -2,6 +2,7 @@
 
 import {
   PARTNER_KINDS,
+  REFERRAL_WINDOW_MAX_DAYS,
   type Page,
   type PartnerDto,
   type PartnerInput,
@@ -33,6 +34,14 @@ export function partnerFields(form: FormData): Omit<PartnerInput, 'branchId'> {
     locationId: text('locationId'),
     currency: field(form, 'currency'),
     notes: text('notes'),
+    // Plan 18: only a referrer sends its optional first-shipment expiry (empty: no limit).
+    ...(form.has('referralWindowDays')
+      ? {
+          referralWindowDays: text('referralWindowDays')
+            ? Number(field(form, 'referralWindowDays'))
+            : null,
+        }
+      : {}),
   };
 }
 
@@ -44,6 +53,7 @@ export function PartnerFields({ partner }: { partner?: PartnerDto }) {
   const localName = useLocalName();
   const me = useMe();
   const [country, setCountry] = useState(partner?.countryCode ?? '');
+  const [kind, setKind] = useState<PartnerKind>(partner?.kind ?? 'SALES_OUTLET');
   const [locationId, setLocationId] = useState(partner?.locationId ?? '');
   const places = (master?.locations ?? []).filter(
     (l) => (l.isActive || l.id === partner?.locationId) && isPlace(l) && l.countryCode === country,
@@ -56,7 +66,12 @@ export function PartnerFields({ partner }: { partner?: PartnerDto }) {
       <div className="grid">
         <label className="field">
           {t('kind')}
-          <select name="kind" required defaultValue={partner?.kind ?? 'SALES_OUTLET'}>
+          <select
+            name="kind"
+            required
+            value={kind}
+            onChange={(e) => setKind(e.target.value as PartnerKind)}
+          >
             {PARTNER_KINDS.map((k) => (
               <option key={k} value={k}>
                 {t(`kind_${k}`)}
@@ -151,6 +166,24 @@ export function PartnerFields({ partner }: { partner?: PartnerDto }) {
             ))}
           </select>
         </label>
+        {kind === 'REFERRER' && (
+          <label className="field">
+            {t('referralWindowDays')}
+            <input
+              name="referralWindowDays"
+              type="number"
+              min={1}
+              max={REFERRAL_WINDOW_MAX_DAYS}
+              step={1}
+              dir="ltr"
+              defaultValue={partner?.referralWindowDays ?? ''}
+              aria-describedby="partner-referral-window-hint"
+            />
+            <small id="partner-referral-window-hint" className="muted">
+              {t('referralWindowHint')}
+            </small>
+          </label>
+        )}
       </div>
       <label className="field">
         {tc('notes')}

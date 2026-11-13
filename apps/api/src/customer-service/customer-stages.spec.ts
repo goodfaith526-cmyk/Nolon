@@ -86,7 +86,47 @@ describe('trackOf (plan 09 section 3)', () => {
         stage: track.stage,
         city: { ar: 'جدة', en: 'Jeddah' },
         updatedAt: at.toISOString(),
+        vessel: null,
+        loadingPort: null,
+        arrivalPort: null,
       },
+    });
+  });
+
+  it('names the vessel and the container’s ports (plan 15-2)', () => {
+    const container = {
+      vesselName: 'MSC Aurora',
+      origin: { nameAr: 'ميناء جدة الإسلامي', nameEn: 'Jeddah Islamic Port' },
+      destination: { nameAr: 'الميناء الجنوبي', nameEn: 'South Port' },
+    };
+    const input = (vesselName: string | null, box: typeof container | null): TrackInput => {
+      const base = approved('CONFIRMED', 'DEPARTED');
+      return {
+        ...base,
+        booking: {
+          ...base.booking!,
+          shipment: { ...base.booking!.shipment!, vesselName, container: box },
+        },
+      };
+    };
+    expect(trackOf(input(null, container), stages, mapping).shipment).toMatchObject({
+      vessel: 'MSC Aurora',
+      loadingPort: { ar: 'ميناء جدة الإسلامي', en: 'Jeddah Islamic Port' },
+      arrivalPort: { ar: 'الميناء الجنوبي', en: 'South Port' },
+    });
+    // The shipment's own vessel wins; a blank one counts as none.
+    expect(trackOf(input('Nile Star', container), stages, mapping).shipment?.vessel).toBe(
+      'Nile Star',
+    );
+    expect(trackOf(input('  ', container), stages, mapping).shipment?.vessel).toBe('MSC Aurora');
+    expect(
+      trackOf(input(null, { ...container, vesselName: ' ' }), stages, mapping).shipment?.vessel,
+    ).toBeNull();
+    // In no container: no ports.
+    expect(trackOf(input('Nile Star', null), stages, mapping).shipment).toMatchObject({
+      vessel: 'Nile Star',
+      loadingPort: null,
+      arrivalPort: null,
     });
   });
 

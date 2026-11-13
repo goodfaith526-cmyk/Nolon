@@ -1,9 +1,12 @@
+import { CommissionTriggers } from '../shipments/commission-triggers.registry.js';
+import { ShipmentReferralsService } from '../shipments/shipment-referrals.service.js';
 import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type {
   WindowDeskBookingDto,
   WindowDeskFilter,
   WindowDeskPaymentDto,
   WindowDeskReceiptRequest,
+  WindowDeskReferrerDto,
   WindowDeskTodo,
 } from '@nolon/shared';
 import type { AuthUser } from '../auth/auth-user.js';
@@ -109,6 +112,8 @@ export class WindowDeskService {
     private readonly prisma: PrismaService,
     private readonly movements: WarehouseMovementsService,
     private readonly shipments: ShipmentsService,
+    private readonly referrals: ShipmentReferralsService,
+    private readonly commissions: CommissionTriggers,
     @Inject(APP_ENV) private readonly env: AppEnv,
   ) {}
 
@@ -192,9 +197,55 @@ export class WindowDeskService {
       if (ctx.shipmentId !== shipment.id) throw new NotFoundException('Booking not found');
       if (!user.access.has('window_desk:create', ctx.branchId))
         throw new ForbiddenException('Missing permission');
-      await this.movements.receiveAtWindowInTx(tx, user, ctx, input);
+      const { broughtByReferrerId, ...receipt } = input;
+      await this.movements.receiveAtWindowInTx(tx, user, ctx, receipt);
+      // Plan 18, 4.3: the broker who brought it, an active referrer of the booking's branch.
+      if (broughtByReferrerId) {
+        await this.referrals.requireWindowReferrerInTx(tx, broughtByReferrerId, ctx.branchId);
+        if (
+          await this.referrals.setBroughtByInTx(tx, user, ctx.shipmentId, broughtByReferrerId, null)
+        ) {
+          await this.commissions.shipmentChangedInTx(tx, user, ctx.shipmentId, 'SHIPMENT_REFERRER');
+        }
+      }
     });
     return this.booking(user, bookingId);
+  }
+
+  /**
+   * Plan 18, 4.3: the active referral brokers of the booking's branch the window can pick at
+   * receipt, by name or phone (`q`), at most 20; their phones are not shown.
+   */
+  async referrers(
+    user: AuthUser,
+    bookingId: string,
+    q: string | null,
+  ): Promise<WindowDeskReferrerDto[]> {
+    this.requireDesk(user);
+    return this.prisma.$transaction(async (tx) => {
+      const ctx = await authorizeWindowInTx(tx, user, bookingId);
+      const digits = q?.replace(/\D/g, '') ?? '';
+      const rows = await tx.partner.findMany({
+        where: {
+          kind: 'REFERRER',
+          isActive: true,
+          branchId: ctx.branchId,
+          ...(q
+            ? {
+                OR: [
+                  { name: { contains: q, mode: 'insensitive' } },
+                  { number: { contains: q, mode: 'insensitive' } },
+                  ...(digits.length >= 4 ? [{ phone: { contains: digits } }] : []),
+                ],
+              }
+            : {}),
+        },
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+        take: 20,
+        select: { id: true, number: true, name: true },
+      });
+      return rows;
+    });
   }
 
   /** 404 while the desk is off; 403 for anyone not limited by outlet. */

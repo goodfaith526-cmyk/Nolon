@@ -86,7 +86,8 @@
     "standaloneSignedOut": "انتهت جلستك. سجّل الدخول من نافذة النظام الرئيسية ثم أعد تحميل هذه النافذة.",
     "agentAdmin": "إدارة الوكلاء الذكيين",
     "windowDesk": "طلبات الاستلام",
-    "pallets": "الطبالي"
+    "pallets": "الطبالي",
+    "handoffRequests": "طلبات التواصل"
   },
   "Dashboard": {
     "welcome": "مرحباً، {name}",
@@ -165,7 +166,9 @@
     "assistantApprovals": "الاعتماد من المساعد",
     "assistantApprovalsTitle": "الاعتماد من المساعد: {name}",
     "assistantApprovalsHint": "المسودات التي يجهّزها المساعد لهذا المستخدم ويمكنه اعتمادها أو رفضها من داخل محادثة المساعد. تظل الصلاحية المعتادة لكل إدخال مطلوبة. إيصالات الاستلام تُعتمد دائماً من شاشة المراجعة.",
-    "permissionsChanged": "تغيّرت الصلاحيات أثناء عملك. أعد تحميل الصفحة وحاول مرة ثانية."
+    "permissionsChanged": "تغيّرت الصلاحيات أثناء عملك. أعد تحميل الصفحة وحاول مرة ثانية.",
+    "referrer": "المندوب",
+    "referrerHint": "المندوب الذي يعمل له هذا الحساب: يرى عملاءه وعمولاته فقط، ولا يأخذ أي دور آخر."
   },
   "Roles": {
     "ADMINISTRATOR": "مدير النظام",
@@ -178,7 +181,8 @@
     "CUSTOMS": "الجمارك",
     "DRIVER": "سائق / نقل",
     "SALES_MARKETING_MANAGER": "مدير المبيعات والتسويق",
-    "OUTLET_STAFF": "موظف منفذ"
+    "OUTLET_STAFF": "موظف منفذ",
+    "REFERRER_STAFF": "مندوب (شاشته فقط)"
   },
   "Common": {
     "openStandalone": "افتح في نافذة مستقلة",
@@ -281,7 +285,10 @@
     "country": "الدولة",
     "segment": "شريحة العميل",
     "noSegment": "بدون شريحة",
-    "acquiredViaOutlet": "منفذ الاستقطاب"
+    "acquiredViaOutlet": "منفذ الاستقطاب",
+    "referredBy": "جابه المندوب",
+    "changeReferrer": "تغيير",
+    "referrerReason": "سبب التغيير"
   },
   "Rates": {
     "title": "الأسعار",
@@ -779,7 +786,13 @@
     "stoppedCancelled": "أُلغيت الشحنة عند هذه المرحلة.",
     "lastUpdate": "آخر تحديث",
     "nextStep": "الخطوة التالية",
-    "drawerClose": "إغلاق"
+    "drawerClose": "إغلاق",
+    "referralBroker": "عمولة المندوب",
+    "referrerReason_FIRST_SHIPMENT": "أول شحنة للعميل",
+    "referrerReason_BROUGHT_IN_PERSON": "جابها بنفسه",
+    "broughtBy": "جابها",
+    "changeBroughtBy": "تغيير المندوب",
+    "broughtByReason": "سبب التغيير"
   },
   "PublicStatus": {
     "REGISTERED": "تم تسجيل الشحنة",
@@ -1597,7 +1610,11 @@
     "since_TRIP_LATE": "الوصول المخطط",
     "since_SHIPMENT_NOT_INVOICED": "منذ",
     "since_BOOKING_DRAFT_FROM_REQUEST": "تاريخ الإنشاء",
-    "since_DELIVERED_NOT_CLOSED": "تاريخ التسليم"
+    "since_DELIVERED_NOT_CLOSED": "تاريخ التسليم",
+    "kind_HANDOFF_REQUEST_OPEN": "زبائن طلبوا موظف",
+    "rule_HANDOFF_REQUEST_OPEN": "طلب تواصل من البوت مفتوح منذ {days} يوم أو أكثر ولم يتواصل معه أحد.",
+    "detail_HANDOFF_REQUEST_OPEN": "الزبون",
+    "since_HANDOFF_REQUEST_OPEN": "تاريخ الطلب"
   },
   "ApiAccess": {
     "title": "الوصول عبر الـ API",
@@ -1633,6 +1650,7 @@
     "scope_tracking_lookup": "التتبّع برقم الشحنة والهاتف",
     "scope_marketing_read": "ملخص التسويق: أرقام مجمّعة فقط بدون بيانات عملاء",
     "scope_marketing_revenue_read": "ملخص التسويق: مع الإيراد (يحتاج صلاحية ملخص التسويق)",
+    "scope_referrers_link": "المناديب: ربط حساب المندوب في المحادثة برابطه الخاص",
     "editScopes": "تغيير الصلاحيات",
     "saveScopes": "حفظ الصلاحيات",
     "cancel": "إلغاء",
@@ -1671,7 +1689,8 @@
     "outbox_SENDING": "بيترسل",
     "outbox_SENT": "اترسل",
     "outbox_FAILED": "فشل",
-    "outbox_CANCELLED_BY_POLICY": "اتلغى (ما مسموح تاني)"
+    "outbox_CANCELLED_BY_POLICY": "اتلغى (ما مسموح تاني)",
+    "scope_handoff_requests_create": "طلبات التواصل: إخطار الموظفين أن زبوناً يريد موظفاً"
   },
   "Reports": {
     "title": "التقارير المالية",
@@ -2279,7 +2298,23 @@
     "inactivePartner": "موقوف",
     "salesOutlet": "منفذ البيع",
     "originConsolidator": "المجمّع في المنشأ",
-    "distributor": "الموزّع داخل السودان"
+    "distributor": "الموزّع داخل السودان",
+    "kind_REFERRER": "مندوب",
+    "referralCode": "كود العملاء",
+    "referralWindowDays": "مدة أول شحنة (أيام)",
+    "referralWindowHint": "فارغ: بدون حد. أول شحنة للعميل تُحسب للمندوب فقط خلال هذه المدة من ربطه.",
+    "referralNoLimit": "بدون حد",
+    "referralDays": "{days, plural, one {يوم واحد} two {يومان} few {# أيام} other {# يوماً}}",
+    "newReferralCode": "كود عملاء جديد",
+    "newReferralCodeConfirm": "إصدار كود جديد؟ الكود القديم لن يربط عملاء جدد، والعملاء المربوطون يبقون كما هم.",
+    "chatLinkIssue": "رابط بوت جديد",
+    "chatLinkOnce": "أرسل هذا الرابط الخاص للوسيط. يظهر الآن فقط، ويعمل مرة واحدة لمدة 7 أيام. فتحه في البوت يربط حسابه في تيليجرام.",
+    "chatLinkExpires": "ينتهي {date}",
+    "chatLinked": "تيليجرام",
+    "chatLinkedSince": "مربوط منذ {date}",
+    "chatNotLinked": "غير مربوط",
+    "chatRevoke": "فك ربط تيليجرام",
+    "chatRevokeConfirm": "فك ربط حساب تيليجرام للوسيط؟ لن تصله إشعارات حتى يفتح رابطاً جديداً."
   },
   "PartnerContracts": {
     "title": "عقود العمولة",
@@ -2910,6 +2945,8 @@
     "BASE_CURRENCY_STAYS_ACTIVE": "{code} هي العملة الأساسية التي تتوازن بها كل القيود: لا يمكن تعطيلها.",
     "PARTNER_LOCATION_OTHER_COUNTRY": "الموقع {location} في الدولة {country}: اختر موقعاً في دولة الشريك، أو غيّر الدولة.",
     "PARTNER_NOT_USABLE": "هذا الشريك غير معروف، أو موقوف، أو ليس من فروع هذا السجل.",
+    "REFERRER_KIND_FIXED": "المندوب يبقى مندوباً، ولا يتحول نوع شريك آخر إلى مندوب.",
+    "NOT_A_REFERRER": "كود العملاء ومدة أول شحنة للمندوب فقط.",
     "QUOTED_OUTLET_FIXED": "الحجز المُنشأ من عرض سعر يحتفظ بمنفذ البيع الخاص بالعرض.",
     "CUSTOMER_SEGMENT_NOT_USABLE": "شريحة العملاء هذه غير معروفة أو لم تعد مستخدمة.",
     "CONTRACT_OVERLAP": "يوجد عقد معتمد آخر لهذا الشريك يغطي الفئة نفسها في بعض هذه التواريخ. ألغه أولاً أو غيّر التواريخ.",
@@ -2992,7 +3029,10 @@
     "PALLET_SHIPMENT_FINISHED": "الشحنة {shipment} مسلّمة أو مغلقة أو ملغاة ولا يمكن وضعها على طبلية.",
     "PALLET_SHIPMENT_OTHER_BRANCH": "الشحنة {shipment} تتبع فرعاً غير فرع الطبلية.",
     "SHIPMENT_ON_PALLET": "الشحنة {shipment} على الطبلية {pallet}: تدخل وتخرج مع الطبلية كاملة، من صفحة الطبلية.",
-    "SHIPMENT_CANCEL_ON_PALLET": "الشحنة {shipment} على الطبلية {pallet}: أزلها من الطبلية (أو فكّ الطبلية) قبل إلغائها."
+    "SHIPMENT_CANCEL_ON_PALLET": "الشحنة {shipment} على الطبلية {pallet}: أزلها من الطبلية (أو فكّ الطبلية) قبل إلغائها.",
+    "CUSTOMER_EXISTS": "هذا الرقم عميل لدى نولون بالفعل، فلا يمكن إضافته لك.",
+    "TOO_MANY_ATTEMPTS": "محاولات مرفوضة كثيرة اليوم. حاول غداً.",
+    "NO_BROKER": "هذا الحساب غير مربوط بمندوب بعد. تواصل مع نولون."
   },
   "Locations": {
     "title": "الموانئ والمدن",
@@ -3226,7 +3266,8 @@
     "module_payment_instructions": "تعليمات الدفع",
     "module_agent_admin": "لوحة إدارة وكيل الحجوزات",
     "module_handover_payment": "تسليم البضاعة بدون الدفع (بسبب مكتوب)",
-    "module_window_desk": "مكتب النافذة (طلبات الاستلام)"
+    "module_window_desk": "مكتب النافذة (طلبات الاستلام)",
+    "module_referrer_portal": "شاشة المندوب الخاصة"
   },
   "BotRequests": {
     "title": "طلبات الحجز من البوت",
@@ -3439,6 +3480,7 @@
     "role_SALES_OUTLET": "منفذ بيع",
     "role_ORIGIN_CONSOLIDATOR": "مجمّع في المنشأ",
     "role_DISTRIBUTOR": "موزّع",
+    "role_REFERRER": "المندوب",
     "currency": "العملة",
     "amountSigned": "المبلغ (السالب يخفّض)",
     "reason": "السبب",
@@ -3597,6 +3639,69 @@
     "container": "الحاوية {number}",
     "trip": "الرحلة {number}",
     "cancelledReason": "أُلغيت: {reason}",
-    "qrCaption": "امسح الرمز لفتح صفحة الطبلية"
+    "qrCaption": "امسح الرمز لفتح صفحة الطبلية",
+    "printWaybill": "طباعة البوليصة",
+    "broughtByBroker": "جابها مندوب بنفسه (اختياري)",
+    "brokerSearch": "اسم المندوب أو رقمه",
+    "brokerFind": "بحث",
+    "brokerNone": "بدون مندوب",
+    "brokerNotFound": "ما لقينا مندوب"
+  },
+  "ReferrerPortal": {
+    "title": "{name}: عملاؤك",
+    "linkHint": "شارك هذا الرابط مع من تجلبهم لنولون. من يسجّل عن طريقه يصبح عميلك.",
+    "addTitle": "إضافة عميل",
+    "name": "الاسم",
+    "phone": "الهاتف (مع رمز الدولة)",
+    "add": "إضافة",
+    "added": "تمت إضافة العميل.",
+    "customers": "عملاؤك",
+    "noCustomers": "لا يوجد عملاء بعد.",
+    "phoneEnd": "الهاتف",
+    "registered": "تاريخ التسجيل",
+    "shipments": "الشحنات",
+    "commissions": "عمولاتك",
+    "pending": "لم تدخل كشفاً بعد:",
+    "noCommissions": "لا توجد عمولات بعد.",
+    "date": "التاريخ",
+    "customer": "العميل",
+    "reason": "السبب",
+    "reason_FIRST_SHIPMENT": "أول شحنة",
+    "reason_BROUGHT_IN_PERSON": "أحضرها بنفسه",
+    "amount": "المبلغ",
+    "statements": "كشوفك",
+    "noStatements": "لا توجد كشوف بعد.",
+    "statement": "الكشف",
+    "periodTo": "حتى",
+    "status": "الحالة",
+    "status_BILLED": "مستحق",
+    "status_SETTLED": "مدفوع",
+    "noBroker": "هذا الحساب غير مربوط بمندوب بعد. تواصل مع نولون."
+  },
+  "HandoffRequests": {
+    "title": "طلبات التواصل",
+    "intro": "زبائن طلبوا من البوت أن يكلمهم موظف. اتصل بالزبون ثم اضغط «تواصلت معه».",
+    "open": "المفتوحة",
+    "all": "الكل",
+    "none": "لا توجد طلبات.",
+    "number": "الرقم",
+    "customer": "الزبون",
+    "phone": "الهاتف",
+    "reason": "السبب",
+    "channel": "القناة",
+    "branch": "الفرع",
+    "allBranches": "كل فروع البوت",
+    "city": "مدينة الإرسال",
+    "bookingRequest": "طلب الحجز",
+    "time": "الوقت",
+    "status": "الحالة",
+    "status_open": "مفتوح",
+    "status_contacted": "تم التواصل",
+    "contacted": "تواصلت معه",
+    "contactedBy": "تواصل {name}",
+    "done": "تم تسجيل التواصل.",
+    "channel_telegram": "تيليجرام",
+    "channel_whatsapp": "واتساب",
+    "channel_web": "موقع الويب"
   }
 }

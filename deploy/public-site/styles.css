@@ -1058,6 +1058,103 @@ footer a:hover {
   padding: 5px 12px;
   cursor: pointer;
 }
+.chip:hover {
+  border-color: var(--blue);
+}
+.chip:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+/* The bot's answer buttons: two in a row under its reply, wide enough to tap, like Telegram's. */
+.answers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-self: flex-start;
+  inline-size: min(92%, 380px);
+}
+.answer {
+  font: 600 14px var(--font);
+  min-block-size: 42px;
+  padding: 8px 12px;
+  border: 1px solid var(--blue);
+  border-radius: 12px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  cursor: pointer;
+  text-align: center;
+  overflow-wrap: anywhere;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+.answer:hover,
+.answer[aria-expanded='true'] {
+  background: var(--blue);
+  color: #fff;
+}
+.answer:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+/* A lone button, or the last of an odd count, takes the whole row. */
+.answer:last-of-type:nth-of-type(odd) {
+  grid-column: 1 / -1;
+}
+.chat .sizes {
+  display: block;
+  grid-column: 1 / -1;
+  flex-basis: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: var(--surface);
+}
+.sizes-title {
+  margin: 0 0 8px;
+  font: 600 13px var(--font);
+}
+.sizes-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sizes-box {
+  flex: 1 1 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font: 500 12px var(--font);
+  text-align: center;
+}
+.chat .sizes-box input {
+  box-sizing: border-box;
+  inline-size: 100%;
+  padding: 6px 4px;
+  font: 500 15px var(--font);
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+}
+.sizes-send {
+  margin-block-start: 8px;
+  inline-size: 100%;
+  padding: 8px;
+  font: 600 14px var(--font);
+  border: 0;
+  border-radius: 8px;
+  background: var(--blue);
+  color: #fff;
+  cursor: pointer;
+}
+.sizes-note {
+  margin: 6px 0 0;
+  min-block-size: 1em;
+  font: 500 12px var(--font);
+  color: #c0392b;
+}
 .chat form {
   display: flex;
   gap: 8px;

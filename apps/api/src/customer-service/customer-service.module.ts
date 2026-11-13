@@ -1,3 +1,11 @@
+import {
+  HandoffRequestsController,
+  HandoffReviewController,
+} from './handoff-requests.controller.js';
+import { HandoffRequestsService } from './handoff-requests.service.js';
+import { ReferrerChannelsModule } from '../partners/referrer-channels.module.js';
+import { ReferrerLinkController } from './referrer-link.controller.js';
+import { PartnerRefsModule } from '../partners/partner-refs.module.js';
 import { CustomerStagesController } from './customer-stages.controller.js';
 import { CustomerStagesService } from './customer-stages.service.js';
 import { CustomerProfileReviewController } from './customer-profile-review.controller.js';
@@ -59,6 +67,8 @@ import { QuoteService } from './quote.service.js';
     BookingsModule,
     CurrenciesModule,
     MasterDataModule,
+    PartnerRefsModule,
+    ReferrerChannelsModule,
     QuotationsModule,
     RatesModule,
     ShipmentsModule,
@@ -80,6 +90,9 @@ import { QuoteService } from './quote.service.js';
     PaymentInstructionsController,
     CustomerStagesController,
     CsDocumentsController,
+    ReferrerLinkController,
+    HandoffRequestsController,
+    HandoffReviewController,
   ],
   providers: [
     CustomerProfileReviewService,
@@ -106,7 +119,13 @@ import { QuoteService } from './quote.service.js';
     CsOutboxWorker,
     { provide: CS_NOTICE_TRANSPORT, useFactory: () => httpsTransport() },
     BookingRequestReportsService,
+    HandoffRequestsService,
   ],
-  exports: [ApiClientGuard, BookingRequestReportsService, BookingReviewService],
+  exports: [
+    ApiClientGuard,
+    BookingRequestReportsService,
+    BookingReviewService,
+    HandoffRequestsService,
+  ],
 })
 export class CustomerServiceModule {}

@@ -1,3 +1,4 @@
+import { ReferrerChannelsService } from '../partners/referrer-channels.service.js';
 import {
   ConflictException,
   HttpStatus,
@@ -123,6 +124,7 @@ export class CommissionAccrualService implements CommissionSyncHandler, OnModule
     private readonly currencies: CurrenciesService,
     private readonly audit: AuditService,
     private readonly statements: PartnerStatementsService,
+    private readonly referrerChannels: ReferrerChannelsService,
   ) {}
 
   onModuleInit(): void {
@@ -328,6 +330,10 @@ export class CommissionAccrualService implements CommissionSyncHandler, OnModule
           createdById: user.id,
         },
       });
+      // Plan 18, 6: a broker's first commission on his customer's first paid shipment tells him.
+      if (role === 'REFERRER' && own.length === 0 && amount.gt(0)) {
+        await this.referrerChannels.accruedInTx(tx, { shipmentId, partnerId, currency, amount });
+      }
     }
     return held;
   }

@@ -45,6 +45,8 @@ export const CS_SCOPES = [
   'cs:customer_profiles:write',
   'cs:marketing:read',
   'cs:marketing:revenue:read',
+  'cs:referrers:link',
+  'cs:handoff_requests:create',
 ] as const;
 export type CsScope = (typeof CS_SCOPES)[number];
 
@@ -821,6 +823,17 @@ export interface CsShipmentTrackDto {
   /** When its status last changed (the latest status event). */
   updatedAt: string;
   /**
+   * Plan 15-2: the vessel carrying it, as staff recorded it (the shipment's own, else its
+   * container's); null when none is recorded. A fact for the bot to name, not a promise.
+   */
+  vessel: string | null;
+  /**
+   * Plan 15-2: its container's port of loading and port of arrival (the places' own names, not
+   * their cities); null when it is in no container.
+   */
+  loadingPort: { ar: string; en: string } | null;
+  arrivalPort: { ar: string; en: string } | null;
+  /**
    * Plan 09 amendment 4: the public tracking page (what the shipment's QR opens), for the bot to
    * show or draw as a QR; null when NOLON has no public address configured.
    */
@@ -1461,4 +1474,36 @@ export interface CsStatementDto {
   /** Null for an authorized person's token (CONTACT_PHONE): nothing invoice-derived (F206-3). */
   invoices: CsStatementInvoicesDto | null;
   invoicesHidden: 'CONTACT' | null;
+}
+
+/**
+ * 2026-11-12 (owner: «اخطار الموظف يكون في السيستم احسن»): a customer asked the bot for a person.
+ * The bot sends it; staff see it on «طلبات التواصل» and in the alerts bell, and mark it contacted.
+ */
+export const CS_HANDOFF_STATUSES = ['open', 'contacted'] as const;
+export type CsHandoffStatus = (typeof CS_HANDOFF_STATUSES)[number];
+
+/** POST /cs/handoff-requests and GET /cs/handoff-requests/:id: what the bot gets back. */
+export interface CsHandoffCreated {
+  id: string;
+  status: CsHandoffStatus;
+}
+
+/** A contact request on the staff screen. */
+export interface CsHandoffRequestDto {
+  id: string;
+  number: string;
+  status: CsHandoffStatus;
+  channel: CsSenderChannel;
+  senderId: string;
+  customerName: string | null;
+  customerPhone: string | null;
+  reason: string;
+  bookingRequestRef: string | null;
+  branchHint: string | null;
+  /** Null when the city did not name one branch: every branch of the bot's key sees it. */
+  branchId: string | null;
+  createdAt: string;
+  contactedAt: string | null;
+  contactedByName: string | null;
 }

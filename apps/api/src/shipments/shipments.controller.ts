@@ -71,6 +71,10 @@ const cargoCorrectionBody = z
  * Why a shipment is held, reverted or cancelled: at least 3 characters once trimmed, so a stray
  * key press is not recorded as a reason. The web form counts the same way.
  */
+const referrerBody = z
+  .object({ partnerId: z.uuid().nullable(), reason: requiredText(500) })
+  .strict();
+
 const shipmentReason = requiredText(1000).pipe(z.string().min(SHIPMENT_REASON_MIN_LENGTH));
 const statusBody = z
   .object({
@@ -191,6 +195,18 @@ export class ShipmentsController {
     @Body() body: unknown,
   ): Promise<ShipmentDto> {
     return this.shipments.update(user, id, parse(updateBody, body));
+  }
+
+  /** Plan 18, 4.3: corrects the broker who brought the shipment in person, with a reason. */
+  @Post(':id/referrer')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission('shipments:update')
+  setReferrer(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ): Promise<ShipmentDto> {
+    return this.shipments.setBroughtBy(user, id, parse(referrerBody, body));
   }
 
   /** Corrects the cargo lines after confirmation (B3-3); the shipment's own branch only. */

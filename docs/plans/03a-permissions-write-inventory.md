@@ -82,6 +82,7 @@
 - POST `/cs-booking-requests/:id/items/:itemId/resolve` · `BookingReviewController.resolveItem` · `customer-service/booking-review.controller.ts` · bookings:update
 - POST `/cs-booking-requests/:id/reject` · `BookingReviewController.reject` · `customer-service/booking-review.controller.ts` · cs_booking_requests:approve
 - POST `/cs-booking-requests/:id/route` · `BookingReviewController.route` · `customer-service/booking-review.controller.ts` · cs_booking_requests:update
+- POST `/cs-handoff-requests/:id/contacted` · `HandoffReviewController.contacted` · `customer-service/handoff-requests.controller.ts` · cs_booking_requests:update
 - PUT `/cs-reject-reasons/:code` · `RejectReasonsController.set` · `customer-service/booking-review.controller.ts` · master_data:update
 - POST `/cs/booking-requests` · `BookingRequestsController.create` · `customer-service/customer-service.controller.ts` · —
 - POST `/cs/booking-requests/:id/accept-estimate` · `BookingRequestsController.acceptEstimate` · `customer-service/customer-service.controller.ts` · —
@@ -91,8 +92,10 @@
 - POST `/cs/customer-profiles/:id/follow-up` · `CustomerIdentityController.followUp` · `customer-service/customer-identity.controller.ts` · —
 - POST `/cs/customer-profiles/capture` · `CustomerIdentityController.capture` · `customer-service/customer-identity.controller.ts` · —
 - POST `/cs/customer-tokens` · `CustomerTokensController.issue` · `customer-service/customer-service.controller.ts` · —
+- POST `/cs/handoff-requests` · `HandoffRequestsController.create` · `customer-service/handoff-requests.controller.ts` · —
 - POST `/cs/quotations` · `QuotationSaveController.save` · `customer-service/customer-service.controller.ts` · —
 - POST `/cs/quotes` · `QuotesController.quote` · `customer-service/customer-service.controller.ts` · —
+- POST `/cs/referrers/link` · `ReferrerLinkController.link` · `customer-service/referrer-link.controller.ts` · —
 - POST `/customer-drafts` · `CustomerDraftsController.create` · `customers/customer-drafts.controller.ts` · customers:create
 - PATCH `/customer-drafts/:id` · `CustomerDraftsController.update` · `customers/customer-drafts.controller.ts` · customers:create
 - POST `/customer-drafts/:id/approve` · `CustomerDraftsController.approve` · `customers/customer-drafts.controller.ts` · customers:create
@@ -117,6 +120,7 @@
 - POST `/customers/:id/deactivate` · `CustomersController.deactivate` · `customers/customers.controller.ts` · customers:update
 - POST `/customers/:id/parties` · `CustomersController.addParty` · `customers/customers.controller.ts` · customers:update
 - PATCH `/customers/:id/parties/:partyId` · `CustomersController.updateParty` · `customers/customers.controller.ts` · customers:update
+- POST `/customers/:id/referrer` · `CustomersController.setReferrer` · `customers/customers.controller.ts` · customers:update
 - POST `/customers/import` · `CustomersImportController.commit` · `customers/customers-import.controller.ts` · customers:create
 - POST `/customers/import/preview` · `CustomersImportController.preview` · `customers/customers-import.controller.ts` · customers:create
 - POST `/expenses` · `ExpensesController.create` · `expenses/expenses.controller.ts` · expenses:create
@@ -187,6 +191,9 @@
 - POST `/partner-statements/:id/cancel` · `CommissionsController.cancelStatement` · `commissions/commissions.controller.ts` · partner_commissions:update
 - POST `/partners` · `PartnersController.create` · `partners/partners.controller.ts` · partners:create
 - PATCH `/partners/:id` · `PartnersController.update` · `partners/partners.controller.ts` · partners:update
+- POST `/partners/:id/chat-link` · `PartnersController.issueChatLink` · `partners/partners.controller.ts` · partners:update
+- POST `/partners/:id/chat-link/revoke` · `PartnersController.revokeChatLink` · `partners/partners.controller.ts` · partners:update
+- POST `/partners/:id/referral-code` · `PartnersController.issueReferralCode` · `partners/partners.controller.ts` · partners:update
 - POST `/partners/:partnerId/commissions/adjustments` · `CommissionsController.adjust` · `commissions/commissions.controller.ts` · partner_commissions:approve
 - POST `/partners/:partnerId/contracts` · `PartnerContractsController.create` · `partners/partner-contracts.controller.ts` · partner_contracts:create
 - POST `/partners/:partnerId/statements` · `CommissionsController.createStatement` · `commissions/commissions.controller.ts` · partner_commissions:create
@@ -236,6 +243,7 @@
 - POST `/receipts/:id/applications` · `ReceiptsController.apply` · `billing/billing.controller.ts` · receipts:create
 - POST `/receipts/:id/applications/:applicationId/reverse` · `ReceiptsController.reverseApplication` · `billing/billing.controller.ts` · receipts:cancel
 - POST `/receipts/:id/cancel` · `ReceiptsController.cancel` · `billing/billing.controller.ts` · receipts:cancel
+- POST `/referrer-portal/customers` · `ReferrerPortalController.addCustomer` · `referrer-portal/referrer-portal.controller.ts` · referrer_portal:create
 - POST `/release-drafts` · `GoodsReleaseDraftsController.create` · `warehouse/goods-release-drafts.controller.ts` · warehouse:create
 - PATCH `/release-drafts/:id` · `GoodsReleaseDraftsController.update` · `warehouse/goods-release-drafts.controller.ts` · warehouse:create
 - POST `/release-drafts/:id/approve` · `GoodsReleaseDraftsController.approve` · `warehouse/goods-release-drafts.controller.ts` · warehouse:create
@@ -255,6 +263,7 @@
 - PUT `/shipments/:id/containers/:containerId` · `ShipmentsController.updateContainer` · `shipments/shipments.controller.ts` · shipments:update
 - POST `/shipments/:id/hold` · `ShipmentsController.hold` · `shipments/shipments.controller.ts` · shipments:update
 - PUT `/shipments/:id/items` · `ShipmentsController.correctCargo` · `shipments/shipments.controller.ts` · shipments:update
+- POST `/shipments/:id/referrer` · `ShipmentsController.setReferrer` · `shipments/shipments.controller.ts` · shipments:update
 - POST `/shipments/:id/resume` · `ShipmentsController.resume` · `shipments/shipments.controller.ts` · shipments:update
 - POST `/shipments/:id/revert` · `ShipmentsController.revert` · `shipments/shipments.controller.ts` · shipments:approve
 - POST `/shipments/:id/status` · `ShipmentsController.changeStatus` · `shipments/shipments.controller.ts` · shipments:view

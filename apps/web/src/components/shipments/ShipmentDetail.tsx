@@ -41,6 +41,7 @@ import { ShipmentDocuments } from './ShipmentDocuments';
 import { ShipmentRevertForm } from './ShipmentRevertForm';
 import { PrintLink } from '../print/PrintLink';
 import { PartnerName, PartnerSelect, partnerChange } from '../partners/PartnerSelect';
+import { ShipmentReferrer } from './ShipmentReferrer';
 import { useStandalone } from '../standalone/StandaloneShell';
 import { StandaloneWindowButton } from '../standalone/StandaloneWindowButton';
 import { Drawer } from '../Drawer';
@@ -658,6 +659,14 @@ export function ShipmentDetail({ id }: { id: string }) {
                       <dt>{tpa('distributor')}</dt>
                       <dd>
                         <PartnerName partner={s.distributor} />
+                      </dd>
+                      <dt>{t('referralBroker')}</dt>
+                      <dd>
+                        <ShipmentReferrer
+                          shipment={s}
+                          canEdit={actions.canEdit}
+                          onChanged={setShipment}
+                        />
                       </dd>
                       <dt>{t('sharedBranches')}</dt>
                       <dd>
