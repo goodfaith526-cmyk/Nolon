@@ -58,15 +58,16 @@ interface NavLink {
     | 'apiKeys'
     | 'assistantDrafts'
     | 'botRequests'
-    | 'handoffRequests'
-    | 'windowDesk';
+    | 'windowDesk'
+    | 'pallets'
+    | 'handoffRequests';
   icon: keyof typeof icons;
   /** Shown with this permission, or with any of these. */
   permission?: Permission | readonly Permission[];
   /** Shown to a person holding a live delegation (plan 03), whatever their permissions. */
   delegates?: true;
-  /** Shown only while this switch is on (plan 13 section 2: the window desk). */
-  when?: 'windowDeskEnabled';
+  /** Shown only while this switch is on (plan 13 section 2: the window desk; plan 15-3: pallets). */
+  when?: 'windowDeskEnabled' | 'palletsEnabled';
 }
 
 type SectionTitle = 'commercial' | 'operations' | 'fleet' | 'finance' | 'insights' | 'settings';
@@ -143,6 +144,13 @@ const NAV_SECTIONS: readonly {
         label: 'consolidations',
         icon: 'ship',
         permission: 'consolidation:view',
+      },
+      {
+        href: '/pallets',
+        label: 'pallets',
+        icon: 'warehouse',
+        permission: 'warehouse:view',
+        when: 'palletsEnabled',
       },
       { href: '/trips', label: 'trips', icon: 'truck', permission: 'transport_trips:view' },
       {

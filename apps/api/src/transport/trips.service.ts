@@ -425,7 +425,7 @@ export class TripsService implements OnModuleInit {
    */
   async removeShipment(user: AuthUser, id: string, shipmentId: string): Promise<TripDto> {
     forbidDriverOnly(user, 'change the shipments of a trip');
-    await this.findScoped(user, id);
+    const scoped = await this.findScoped(user, id);
     await this.prisma.$transaction(async (tx) => {
       const trip = await lockTrip(tx, id);
       if (!isPlanned(trip.status)) {
@@ -436,6 +436,12 @@ export class TripsService implements OnModuleInit {
       if (!links.some((l) => l.shipmentId === shipmentId)) {
         throw new NotFoundException('The shipment is not on this trip');
       }
+      // Plan 15-3: a shipment on a live pallet comes off only with its whole pallet.
+      await this.shipmentLinks.requireNotOnPalletInTx(
+        tx,
+        shipmentId,
+        (await this.shipmentNumbers(user, scoped)).get(shipmentId) ?? shipmentId,
+      );
       if (links.length === 1) {
         throw new ConflictException(
           'A trip carries at least one shipment: cancel the trip instead',
@@ -444,6 +450,86 @@ export class TripsService implements OnModuleInit {
       await tx.tripShipment.delete({ where: { tripId_shipmentId: { tripId: id, shipmentId } } });
     });
     return this.get(user, id);
+  }
+
+  /**
+   * Plan 15-3: puts a closed pallet's shipments on a planned trip, inside the pallet's transaction
+   * (the pallet row is locked first, then the trip, then each shipment), with every rule of adding
+   * a shipment. Returns the trip.
+   */
+  async putPalletInTx(
+    tx: Tx,
+    user: AuthUser,
+    id: string,
+    palletId: string,
+    shipmentIds: readonly string[],
+  ): Promise<{ id: string; number: string }> {
+    forbidDriverOnly(user, 'change the shipments of a trip');
+    await this.findScoped(user, id);
+    const numbers = await this.requireVisibleShipments(user, shipmentIds);
+    const trip = await lockTrip(tx, id);
+    if (!isPlanned(trip.status)) {
+      throw new ConflictException('Shipments are added only while the trip is planned');
+    }
+    await requireNoPostedExpenses(tx, id);
+    const links = await tx.tripShipment.findMany({ where: { tripId: id } });
+    if (links.length + shipmentIds.length > MAX_TRIP_SHIPMENTS) {
+      throw new ConflictException(`A trip carries at most ${MAX_TRIP_SHIPMENTS} shipments`);
+    }
+    if (links.some((l) => shipmentIds.includes(l.shipmentId))) {
+      throw new ConflictException('A shipment of the pallet is already on this trip');
+    }
+    await this.scheduleShipments(tx, user, trip, shipmentIds, numbers, palletId);
+    return { id: trip.id, number: trip.number };
+  }
+
+  /**
+   * Plan 15-3: takes a whole pallet's shipments off a planned trip, inside the pallet's
+   * transaction. Their status stays TRIP_SCHEDULED, as when one shipment is taken off.
+   */
+  async takePalletOutInTx(
+    tx: Tx,
+    user: AuthUser,
+    id: string,
+    shipmentIds: readonly string[],
+  ): Promise<void> {
+    forbidDriverOnly(user, 'change the shipments of a trip');
+    await this.findScoped(user, id);
+    const trip = await lockTrip(tx, id);
+    if (!isPlanned(trip.status)) {
+      throw new ConflictException('Shipments are removed only while the trip is planned');
+    }
+    await requireNoPostedExpenses(tx, id);
+    const links = await tx.tripShipment.findMany({ where: { tripId: id } });
+    if (links.every((l) => shipmentIds.includes(l.shipmentId))) {
+      throw new ConflictException('A trip carries at least one shipment: cancel the trip instead');
+    }
+    await tx.tripShipment.deleteMany({
+      where: { tripId: id, shipmentId: { in: [...shipmentIds] } },
+    });
+  }
+
+  /**
+   * Plan 15-3: the planned or departed trip carrying the shipment, or null: a shipment on one goes
+   * on a pallet only after it is taken off or the trip arrives.
+   */
+  async liveTripOfInTx(tx: Tx, shipmentId: string): Promise<{ number: string } | null> {
+    const link = await tx.tripShipment.findFirst({
+      where: { shipmentId, trip: { status: { in: [...OPEN_TRIP_STATUSES] } } },
+      select: { trip: { select: { number: true } } },
+    });
+    return link?.trip ?? null;
+  }
+
+  /** Plan 15-3: a trip's number and status, for a pallet it may carry. */
+  async carrierInTx(
+    tx: Tx,
+    id: string,
+  ): Promise<{ number: string; status: TripStatus; branchId: string }> {
+    return tx.trip.findUniqueOrThrow({
+      where: { id },
+      select: { number: true, status: true, branchId: true },
+    });
   }
 
   /** Departs, arrives or completes the trip, moving its shipments (see the class comment). */
@@ -773,11 +859,14 @@ export class TripsService implements OnModuleInit {
     trip: { id: string; number: string; branchId: string },
     shipmentIds: readonly string[],
     numbers: ReadonlyMap<string, string>,
+    palletId?: string,
   ): Promise<void> {
     const blocked: { label: string; status: string }[] = [];
     for (const shipmentId of [...shipmentIds].sort()) {
       const label = numbers.get(shipmentId) ?? shipmentId;
       const status = await this.shipments.lockForChildWrite(tx, shipmentId, { exclusive: true });
+      // Plan 15-3: a shipment on a live pallet goes on a trip only with its whole pallet.
+      await this.shipmentLinks.requireNotOnPalletInTx(tx, shipmentId, label, palletId);
       if (!isActive(status)) {
         throw new ConflictException(`Shipment ${label} is ${status} and cannot go on a trip`);
       }

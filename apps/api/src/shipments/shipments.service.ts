@@ -2484,6 +2484,14 @@ function sharedIds(s: { sharedBranches: readonly { branchId: string }[] }): stri
  * (B3-4) and a closed container reopened (B3-5) from their pages.
  */
 function cancelRefusal(shipment: string, blocker: ShipmentLinkBlocker): HttpException {
+  if (blocker.record === 'PALLET') {
+    return codedRefusal(
+      HttpStatus.CONFLICT,
+      'SHIPMENT_CANCEL_ON_PALLET',
+      `Shipment ${shipment} is on pallet ${blocker.number}: remove it from the pallet, or unpack the pallet, before cancelling it`,
+      { shipment, pallet: blocker.number },
+    );
+  }
   return blocker.record === 'TRIP'
     ? codedRefusal(
         HttpStatus.CONFLICT,
@@ -2505,9 +2513,11 @@ const REVERT_REFUSALS = {
   WAREHOUSE: 'REVERT_BY_WAREHOUSE',
   POD: 'REVERT_BY_POD',
   CUSTOMS: 'REVERT_BY_CUSTOMS',
-} as const satisfies Record<ShipmentLinkBlocker['record'], FormRefusal>;
+} as const satisfies Record<Exclude<ShipmentLinkBlocker['record'], 'PALLET'>, FormRefusal>;
 
 function revertRefusal(blocker: ShipmentLinkBlocker): HttpException {
+  // Plan 15-3: a pallet records no step of its own (its container or trip does).
+  if (blocker.record === 'PALLET') throw new Error('A pallet blocks no revert');
   return codedRefusal(
     HttpStatus.CONFLICT,
     REVERT_REFUSALS[blocker.record],

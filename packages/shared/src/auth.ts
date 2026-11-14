@@ -419,4 +419,6 @@ export interface AuthMeResponse {
   windowDeskEnabled: boolean;
   /** Plan 13 section 4: whether the window takes the customer's money (WINDOW_COLLECT_ENABLED). */
   windowCollectEnabled: boolean;
+  /** Plan 15-3: whether pallets are on (PALLETS_ENABLED). */
+  palletsEnabled: boolean;
 }

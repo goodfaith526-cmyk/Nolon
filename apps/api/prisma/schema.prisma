@@ -120,6 +120,9 @@ model Branch {
 
   paymentInstructions PaymentInstruction[]
 
+  pallets         Pallet[]
+  palletShipments PalletShipment[]
+
   @@map("branches")
 }
 
@@ -337,6 +340,11 @@ model User {
   paymentInstructionsApproved PaymentInstruction[] @relation("PaymentInstructionApprovedBy")
   paymentInstructionsRetired  PaymentInstruction[] @relation("PaymentInstructionRetiredBy")
 
+  palletsCreated            Pallet[]                  @relation("PalletCreatedBy")
+  palletsClosed             Pallet[]                  @relation("PalletClosedBy")
+  palletsUnpacked           Pallet[]                  @relation("PalletUnpackedBy")
+  palletsCancelled          Pallet[]                  @relation("PalletCancelledBy")
+  palletShipmentsAdded      PalletShipment[]          @relation("PalletShipmentAddedBy")
   referrerLinkTokensCreated ReferrerLinkToken[]       @relation("ReferrerLinkTokenCreatedBy")
   partnerBindingsRevoked    PartnerChannelBinding[]   @relation("PartnerChannelBindingRevokedBy")
   referrerCustomerAttempts  ReferrerCustomerAttempt[]
@@ -1743,6 +1751,7 @@ model Shipment {
   invoiceDrafts InvoiceDraft[]
   statusDrafts  ShipmentStatusDraft[]
 
+  palletLinks    PalletShipment[]
   partnerNotices CsPartnerNotice[]
 
   @@index([branchId, status])
@@ -2540,6 +2549,8 @@ model Warehouse {
   cashAccounts    WindowCashAccount[]
   releaseDrafts   GoodsReleaseDraft[]
 
+  pallets Pallet[]
+
   @@index([branchId])
   @@index([locationId])
   @@map("warehouses")
@@ -2989,6 +3000,8 @@ model Trip {
 
   draft TripDraft? @relation("TripDraftResult")
 
+  pallets Pallet[]
+
   @@index([branchId, status])
   @@index([driverId])
   @@map("trips")
@@ -3119,6 +3132,8 @@ model Consolidation {
   bookingDrafts    BookingDraft[]
   reopenings       ConsolidationReopening[]
 
+  pallets Pallet[]
+
   @@index([branchId, status])
   @@map("consolidations")
 }
@@ -3176,6 +3191,90 @@ model ConsolidationShipment {
   @@index([shipmentId])
   @@index([branchId])
   @@map("consolidation_shipments")
+}
+
+enum PalletStatus {
+  /// Shipments are added and removed.
+  OPEN
+  /// Wrapped: its shipments are fixed and move together.
+  CLOSED
+  /// Opened: each shipment goes on by itself.
+  UNPACKED
+  CANCELLED
+
+  @@map("pallet_status")
+}
+
+/**
+ * Plan 15-3: a pallet (طبلية), whole shipments wrapped together in a warehouse and handled as one
+ * piece. Put in a container or on a trip, it adds all its shipments at once (its carrier), and the
+ * carrier moves them; only the whole pallet comes out. A shipment is on one live (OPEN or CLOSED)
+ * pallet at a time.
+ */
+model Pallet {
+  id              String       @id @default(uuid()) @db.Uuid
+  /// The branch code, P and a serial: JED-P0001
+  number          String       @unique @db.VarChar(30)
+  /// The warehouse's branch.
+  branchId        String       @map("branch_id") @db.Uuid
+  warehouseId     String       @map("warehouse_id") @db.Uuid
+  status          PalletStatus @default(OPEN)
+  /// The container or trip carrying it now (set when put in, cleared when taken out); it carries
+  /// the pallet only while the container is not unpacked or cancelled, or the trip planned or
+  /// departed.
+  consolidationId String?      @map("consolidation_id") @db.Uuid
+  tripId          String?      @map("trip_id") @db.Uuid
+  notes           String?      @db.VarChar(500)
+  createdById     String       @map("created_by_id") @db.Uuid
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  closedById      String?      @map("closed_by_id") @db.Uuid
+  closedAt        DateTime?    @map("closed_at") @db.Timestamptz(3)
+  /// Set once the pallet was ever put in a container or on a trip.
+  carriedAt       DateTime?    @map("carried_at") @db.Timestamptz(3)
+  unpackedById    String?      @map("unpacked_by_id") @db.Uuid
+  unpackedAt      DateTime?    @map("unpacked_at") @db.Timestamptz(3)
+  cancelledById   String?      @map("cancelled_by_id") @db.Uuid
+  cancelledAt     DateTime?    @map("cancelled_at") @db.Timestamptz(3)
+  cancelReason    String?      @map("cancel_reason") @db.VarChar(500)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  branch        Branch           @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  warehouse     Warehouse        @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  consolidation Consolidation?   @relation(fields: [consolidationId], references: [id], onDelete: Restrict)
+  trip          Trip?            @relation(fields: [tripId], references: [id], onDelete: Restrict)
+  createdBy     User             @relation("PalletCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  closedBy      User?            @relation("PalletClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  unpackedBy    User?            @relation("PalletUnpackedBy", fields: [unpackedById], references: [id], onDelete: Restrict)
+  cancelledBy   User?            @relation("PalletCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  shipments     PalletShipment[]
+
+  @@index([branchId, status])
+  @@index([consolidationId])
+  @@index([tripId])
+  @@map("pallets")
+}
+
+/// A shipment on a pallet. Rows of unpacked and cancelled pallets stay as history.
+model PalletShipment {
+  palletId         String   @map("pallet_id") @db.Uuid
+  shipmentId       String   @map("shipment_id") @db.Uuid
+  /// The pallet's branch.
+  branchId         String   @map("branch_id") @db.Uuid
+  /// The shipment's id while the pallet is OPEN or CLOSED, null once it is unpacked or cancelled:
+  /// its unique index keeps a shipment on one live pallet at a time.
+  activeShipmentId String?  @unique @map("active_shipment_id") @db.Uuid
+  addedById        String   @map("added_by_id") @db.Uuid
+  addedAt          DateTime @default(now()) @map("added_at") @db.Timestamptz(3)
+
+  pallet   Pallet   @relation(fields: [palletId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  addedBy  User     @relation("PalletShipmentAddedBy", fields: [addedById], references: [id], onDelete: Restrict)
+
+  @@id([palletId, shipmentId])
+  @@index([shipmentId])
+  @@index([branchId])
+  @@map("pallet_shipments")
 }
 
 enum TripExpenseStatus {

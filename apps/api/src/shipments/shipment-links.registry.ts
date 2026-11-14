@@ -1,11 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable } from '@nestjs/common';
+import { codedRefusal } from '../common/validation.js';
 import type { Prisma, ShipmentStatus } from '../generated/prisma/client.js';
 
 type Tx = Prisma.TransactionClient;
 
 /** The record a shipment's cancel or revert would leave stuck or contradict (B2). */
 export interface ShipmentLinkBlocker {
-  record: 'TRIP' | 'CONTAINER' | 'WAREHOUSE' | 'POD' | 'CUSTOMS';
+  record: 'TRIP' | 'CONTAINER' | 'WAREHOUSE' | 'POD' | 'CUSTOMS' | 'PALLET';
   /** Its number, as staff see it. */
   number: string;
 }
@@ -54,6 +55,11 @@ export interface ShipmentLinkHandler {
   fullDeliveryAtInTx?(tx: Tx, shipmentId: string): Promise<Date | null>;
   /** Plan 12 section 6: whether a live proof of delivery of this module records a delivery. */
   hasLivePodInTx?(tx: Tx, shipmentId: string): Promise<boolean>;
+  /**
+   * Plan 15-3: the live (open or closed) pallet the shipment is on, or null. A container or trip
+   * takes such a shipment in or out only with its whole pallet (SHIPMENT_ON_PALLET).
+   */
+  livePalletInTx?(tx: Tx, shipmentId: string): Promise<{ id: string; number: string } | null>;
 }
 
 @Injectable()
@@ -97,6 +103,35 @@ export class ShipmentLinksRegistry {
       if (await handler.hasLivePodInTx?.(tx, shipmentId)) return true;
     }
     return false;
+  }
+
+  async livePalletInTx(tx: Tx, shipmentId: string): Promise<{ id: string; number: string } | null> {
+    for (const handler of this.handlers) {
+      const pallet = await handler.livePalletInTx?.(tx, shipmentId);
+      if (pallet) return pallet;
+    }
+    return null;
+  }
+
+  /**
+   * Plan 15-3: 409 SHIPMENT_ON_PALLET when the shipment is on a live pallet, unless the caller acts
+   * for that very pallet (`palletId`). Read under the shipment's exclusive lock or the carrier's.
+   */
+  async requireNotOnPalletInTx(
+    tx: Tx,
+    shipmentId: string,
+    label: string,
+    palletId?: string,
+  ): Promise<void> {
+    const pallet = await this.livePalletInTx(tx, shipmentId);
+    if (pallet && pallet.id !== palletId) {
+      throw codedRefusal(
+        HttpStatus.CONFLICT,
+        'SHIPMENT_ON_PALLET',
+        `Shipment ${label} is on pallet ${pallet.number}: it goes in or out with its whole pallet`,
+        { shipment: label, pallet: pallet.number },
+      );
+    }
   }
 
   async locationEffectsInTx(tx: Tx, shipmentId: string): Promise<LocationEffect[]> {
